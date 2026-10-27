@@ -1,0 +1,11 @@
+# Undefended control group. Expected result: attacks succeed.
+experiment_id: baseline-smoke
+description: Undefended agent against the smoke attack set (control group).
+config: baseline
+attack_set: smoke
+runs: 10
+seed: 1337
+temperature: 0.0
+provider: ollama
+model: llama3.1:8b
+benign_set: data/benign_tasks.json

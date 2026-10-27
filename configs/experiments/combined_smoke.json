@@ -1,0 +1,12 @@
+{
+  "experiment_id": "combined-smoke",
+  "description": "All defense layers enabled against the smoke attack set.",
+  "config": "combined",
+  "attack_set": "smoke",
+  "runs": 10,
+  "seed": 1337,
+  "temperature": 0.0,
+  "provider": "ollama",
+  "model": "llama3.1:8b",
+  "benign_set": "data/benign_tasks.json"
+}
