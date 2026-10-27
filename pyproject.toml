@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-risk-framework"
+version = "0.0.1"
+description = "Local, offline lab that measures how well layered defenses protect a tool-using LLM agent."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "RJ" }]
+requires-python = ">=3.12"
+dependencies = [
+    "PyYAML>=6.0.2",
+]
+
+[project.optional-dependencies]
+# Upper bounds keep CI from going red on a tool release alone (formatter or
+# deprecation-warning changes); bump them deliberately.
+dev = [
+    "pytest>=9.0,<10",
+    "ruff>=0.17,<0.18",
+    "pip-audit>=2.9,<3",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "S",   # bandit (security)
+    "SIM", # simplify
+    "RUF", # ruff-specific
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # assert is how pytest works
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
