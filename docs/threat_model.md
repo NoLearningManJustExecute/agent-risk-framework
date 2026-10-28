@@ -1,7 +1,8 @@
 # Threat Model
 
-Status: Phase 0 draft. It covers the agent that Phases 1–3 will build, so the
-measurement rig, attack cases, and controls all trace back to one document.
+Status: Phase 0 draft, controls updated in Phase 3. It covers the agent that
+Phases 1–3 built, so the measurement rig, attack cases, and controls all trace back
+to one document.
 
 ## 1. System overview
 
@@ -104,7 +105,7 @@ variant (encoding, splitting, other languages; ATLAS AML.T0068 LLM Prompt Obfusc
 | T07 | Exfiltration via tool arguments (confused deputy) | TA2 | ASI03 | LLM02:2026 | — | AML.T0086 | AC10 | In |
 | T08 | System prompt / hidden context leak | TA1 | ASI01 | LLM08:2026 | MCP10:2025 | AML.T0056 | AC04 | In |
 | T09 | Approval-gate bypass (misleading summary, request splitting) | TA1, TA2 | ASI09 | LLM03:2026 | — | AML.T0053 | AC07 | In |
-| T10 | Excessive agency: unrequested autonomous action | TA4 | ASI02, ASI10 | LLM03:2026 | — | AML.T0053 | AC08 | In |
+| T10 | Excessive agency: unrequested autonomous action | TA4 | ASI02, ASI10 | LLM03:2026 | — | AML.T0053 | BT-013 (was AC08) | In (scored by `benign_input_violation`) |
 | T11 | Poisoned MCP tool description | TA3 | ASI04 | LLM04:2026 | MCP03:2025 | AML.T0115.002, AML.T0011.002 | AC11 | In |
 | T12 | Post-approval rug pull / shadow tool | TA3 | ASI04 | LLM04:2026 | MCP03:2025, MCP04:2025 | AML.T0110, AML.T0115.002 | AC12A, AC12B | In |
 | T13 | Runaway loops and resource exhaustion | TA1, TA4 | ASI08 | LLM06:2026 | — | AML.T0034.002 | — | In (step cap measured, no dedicated case) |
@@ -136,16 +137,27 @@ Mapping notes:
 
 ## 7. Controls by experiment config
 
+As built in Phase 3 (`src/agent_risk_framework/guardrails/`, see
+[phase3_guardrails.md](phase3_guardrails.md)). Each control is also an independent
+switch, so a single control can be measured alone.
+
 | Config | Controls | Addresses |
 | --- | --- | --- |
 | `baseline` | None (over-permissioned agent). Expected result: attacks succeed | Control group |
-| `deterministic-only` | Recipient allowlist; path sandbox; approval gate for side effects; tool-description pinning (hash at approval); step cap | ASI02, ASI03, ASI04, ASI08, ASI09; MCP02:2025, MCP03:2025 |
-| `classifier-only` | Prompt-injection classifier on user input **and** tool output | ASI01 (direct and indirect); ASI06 (future, once memory exists) |
-| `output-filter-only` | Output filter for canaries, secrets, hidden context | ASI03 (exfil via output), LLM02:2026, LLM08:2026 |
-| `combined` | All of the above | All in-scope threats |
+| `deterministic-only` | `tool_permissions` (recipient allowlist, path sandbox, secret store denied); `tool_integrity` (vet, pin at approval, quarantine drift/unapproved/shadow tools); `approval_gate` (side effects approved from the real call); step cap (always on) | ASI02, ASI03, ASI04, ASI08, ASI09; MCP02:2025, MCP03:2025, MCP04:2025 |
+| `classifier-only` | `input_classifier`: rule-based injection/override/leak classifier on the user prompt | ASI01 (direct), LLM01:2026, LLM08:2026 (leak requests) |
+| `output-filter-only` | `output_classifier`: the same rules on tool output before the model reads it | ASI01 (indirect), MCP06:2025 |
+| `combined` | All five | All in-scope threats |
+
+Changed from the Phase 0 plan, after the Phase 2 results: the classifier on tool
+output is its own switch (it is the `output-filter-only` config), and the planned
+canary/secret output filter was not built. Its targets are covered elsewhere: the
+secret store is outside the path sandbox (AC03, AC10, AC12A reads), and requests
+for the hidden context are an `input_classifier` rule (AC04). The leak itself (a
+canary in the final answer) is still only measured, by the oracles.
 
 The hypothesis the ablation tests: architectural controls (`deterministic-only`) reduce
-attack success more, at lower false-positive cost, than a classifier alone.
+attack success more, at lower false-positive cost, than content inspection alone.
 
 ## 8. Assumptions
 

@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "description": "Reviewed MCP tool definitions. sha256 covers name, description and input schema; regenerate with python -m agent_risk_framework.guardrails.integrity --write-registry after reviewing a tool change.",
+  "tools": {
+    "read_file": {
+      "sha256": "d1559d07bd402f013de713200171ef0b9b5c01b4dd6fb45f8d03f8d465a3a3c6",
+      "parameters": [
+        "path"
+      ]
+    },
+    "search_docs": {
+      "sha256": "8d1eae4884c215671cc083655809fb8c92e6fbe7c094bc102d385a66dc9964e7",
+      "parameters": [
+        "query"
+      ]
+    },
+    "send_email": {
+      "sha256": "e1ce319b942ce367b7392fb6ab24765efcd9cede41be4f6585a81d566fb7e133",
+      "parameters": [
+        "body",
+        "subject",
+        "to"
+      ]
+    }
+  }
+}

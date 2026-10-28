@@ -1,0 +1,13 @@
+# Phase 3 wiring check: every control on, every scenario and benign task once.
+# N=1 confirms the guardrails, decision log and attribution work against the live
+# model; it is not a measurement. The N=10 ablation is Phase 4.
+experiment_id: phase3-combined-smoke
+description: All five guardrails against the full attack and benign sets, one run each.
+config: combined
+attack_set: data/attack_scenarios.json
+runs: 1
+seed: 1337
+temperature: 0.0
+provider: ollama
+model: llama3.1:8b
+benign_set: data/benign_tasks.json

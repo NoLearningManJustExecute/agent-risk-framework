@@ -6,9 +6,10 @@ how much each layer of defense actually buys, and what it costs in false positiv
 Defense companion to [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab):
 that project demonstrates RAG weaknesses; this one measures defenses for agents.
 
-> **Status: Phase 2 (attack scenarios).** The measurement rig (Phase 0), the
-> deliberately vulnerable agent (Phase 1) and the attack set with its baseline
-> numbers (Phase 2) are built. Guardrails come in Phase 3. See [ROADMAP.md](ROADMAP.md).
+> **Status: Phase 3 (guardrail engine).** The measurement rig (Phase 0), the
+> deliberately vulnerable agent (Phase 1), the attack set with its baseline numbers
+> (Phase 2) and five independently switchable guardrails with a decision log
+> (Phase 3) are built. The defense ablation comes in Phase 4. See [ROADMAP.md](ROADMAP.md).
 
 ## Why measurement first
 
@@ -27,7 +28,7 @@ reproducibly, before there is an agent to measure.
 | SQLite run log, one row per run, with per-config ablation metrics | `src/agent_risk_framework/runlog/` |
 | Deterministic outcome oracles (canary leak, recipient allowlist), no LLM judge | `src/agent_risk_framework/scoring.py` |
 | Experiment manifest format (YAML or JSON) | `src/agent_risk_framework/manifest.py`, `configs/experiments/` |
-| Benign task set with deterministic success criteria (stub, 12 of ~50) | `data/benign_tasks.json` |
+| Benign task set with deterministic success criteria (stub, 13 of ~50) | `data/benign_tasks.json` |
 | Threat model mapped to OWASP Agentic Top 10 (ASI01–ASI10) | `docs/threat_model.md` |
 
 ## What's in Phase 1
@@ -87,6 +88,40 @@ rather than spread; see [docs/phase2_attacks.md](docs/phase2_attacks.md).
 
 ```bash
 python -m agent_risk_framework.attacks.runner --db runs/phase2.db --findings-dir findings --report docs/phase2_results.md
+```
+
+## What's in Phase 3
+
+Five guardrails, each an independent on/off switch, built for where Phase 2 showed
+this model actually breaks: direct prompts and MCP tool definitions. Every control
+logs every decision (allow or block) to the run log, and every run is scored into
+one outcome bucket (`succeeded`, `blocked_by_control`, `did_not_execute`,
+`failed_other`) that records which control gets the credit.
+
+| Control | What it does | Targets |
+| --- | --- | --- |
+| `tool_permissions` | Recipient allowlist on any recipient argument (strict, fails closed); `read_file` sandboxed to the workspace, secret store denied | AC01, AC02 |
+| `tool_integrity` | Vets tool descriptions, pins definitions at approval against a reviewed registry, quarantines drift (rug pull), late and shadow tools | AC11, AC12A, AC12B |
+| `approval_gate` | State-changing calls need approval rendered from the real call; a deterministic simulated reviewer approves | AC07, unrequested sends on benign input |
+| `input_classifier` | Rule-based injection/override/leak classifier on the user prompt | AC05 (and AC04) |
+| `output_classifier` | The same rules on tool output. Defense in depth only: this model ignored tool-output injection at baseline (AC09/AC10 0/20) | AC09, AC10 |
+
+| Piece | Location |
+| --- | --- |
+| Controls, switches and presets, engine | `src/agent_risk_framework/guardrails/` |
+| Outcome buckets and control credit | `src/agent_risk_framework/attacks/attribution.py` |
+| Run log schema v4 (`decisions`, `attributions`, `run_controls`) | `src/agent_risk_framework/runlog/` |
+| Reviewed tool registry (SHA-256 pins) | `configs/tool_registry.json` |
+| Design, decision-log format, scoring rules, isolation tests, smoke run | `docs/phase3_guardrails.md` |
+
+Offline tests prove that each control, switched on alone, blocks its target attack
+and does **not** block the matching benign task. A live N=1 wiring check under all
+five controls: **0/24 attacks succeeded**, 21 were blocked and credited, and **0/13
+benign tasks were blocked**. Rates come from the Phase 4 ablation. AC08 left the
+attack set: it is benign task BT-013, scored by `benign_input_violation`.
+
+```bash
+python -m agent_risk_framework.attacks.runner --manifest configs/experiments/phase3_combined_smoke.yaml --db runs/phase3-smoke.db
 ```
 
 ## Quickstart

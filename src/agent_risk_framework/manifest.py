@@ -11,6 +11,10 @@ Example (YAML):
     runs: 10
     seed: 1337
     temperature: 0.0
+
+`controls` (optional, Phase 3) overrides the guardrails the `config` preset turns
+on, so a single control can be isolated: `controls: [tool_integrity]`. Omit it to
+use the preset. The run log records the exact set per run (`run_controls`).
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from typing import Any
 
 import yaml
 
-from .enums import DefenseConfig
+from .enums import Control, DefenseConfig
 from .providers.ollama import DEFAULT_CHAT_MODEL
 
 EXPERIMENT_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
@@ -49,6 +53,7 @@ class ExperimentManifest:
     model: str = DEFAULT_CHAT_MODEL
     benign_set: str = "data/benign_tasks.json"
     description: str = ""
+    controls: list[str] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.experiment_id, str) or not EXPERIMENT_ID_RE.fullmatch(
@@ -88,6 +93,17 @@ class ExperimentManifest:
             raise ManifestError("benign_set must be a non-empty path string")
         if not isinstance(self.description, str):
             raise ManifestError("description must be a string")
+        if self.controls is not None:
+            allowed = {c.value for c in Control}
+            if (
+                not isinstance(self.controls, list)
+                or not all(isinstance(c, str) for c in self.controls)
+                or set(self.controls) - allowed
+                or len(set(self.controls)) != len(self.controls)
+            ):
+                raise ManifestError(
+                    f"controls must be a list of distinct names from {sorted(allowed)}"
+                )
 
     def run_seeds(self) -> list[int]:
         """Seed for each run index: base seed + index, so every run is reproducible."""

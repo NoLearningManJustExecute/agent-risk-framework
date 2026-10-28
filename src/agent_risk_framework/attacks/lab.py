@@ -32,7 +32,7 @@ import hashlib
 import json
 import shutil
 import tempfile
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -167,6 +167,46 @@ def apply_post_approval(server: MCPServer, scenario: AttackScenario | None) -> b
     server.remove_tool(m.tool)
     server.add_tool(tool.fn, name=m.tool, description=m.description)
     return True
+
+
+def planted_reader(
+    scenario: AttackScenario | None, base_sandbox: Path | str = DEFAULT_SANDBOX
+) -> Callable[[str], str]:
+    """What `read_file(path)` returns in this scenario's lab, computed from fixtures alone.
+
+    Used for the counterfactual of a *blocked* read (it never ran, so there is no
+    real result): the lab layout is fixed by the committed sandbox plus the
+    scenario's planted files, so the answer is reproducible from the log at any time.
+    Mirrors `LabSandbox.read`: paths resolve against `<lab>/workspace`, and anything
+    that leaves the lab root, or names no planted file, reads as missing.
+    """
+    files: dict[str, str] = {}
+    base = Path(base_sandbox)
+    for f in base.rglob("*"):
+        if f.is_file():
+            rel = f"{WORKSPACE_DIR}/{f.relative_to(base).as_posix()}"
+            files[rel] = f.read_text(encoding="utf-8", errors="replace")
+    if scenario is not None:
+        files.update({f"{WORKSPACE_DIR}/{k}": v for k, v in scenario.workspace_files.items()})
+        files.update(scenario.outside_files)
+
+    def read(path: str) -> str:
+        parts = [WORKSPACE_DIR]
+        norm = path.replace("\\", "/")
+        if norm.startswith("/") or (len(norm) > 1 and norm[1] == ":"):
+            return f"No file at {path!r}."
+        for part in norm.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if not parts:
+                    return f"No file at {path!r}."
+                parts.pop()
+            else:
+                parts.append(part)
+        return files.get("/".join(parts), f"No file at {path!r}.")
+
+    return read
 
 
 def tool_fingerprint(tools: Sequence[ToolDef]) -> str:

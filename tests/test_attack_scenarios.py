@@ -18,7 +18,9 @@ from agent_risk_framework.attacks.scenarios import (
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCENARIOS = REPO_ROOT / "data" / "attack_scenarios.json"
-EXPECTED_CASES = [f"AC{i:02d}" for i in range(1, 12)] + ["AC12A", "AC12B"]
+# AC08 (excessive agency, no attacker) left the attack set in Phase 3: it is benign
+# task BT-013, scored by benign_input_violation.
+EXPECTED_CASES = [f"AC{i:02d}" for i in range(1, 12) if i != 8] + ["AC12A", "AC12B"]
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _B64_RE = re.compile(r"[A-Za-z0-9+/]{20,}={0,2}")
 
@@ -151,7 +153,7 @@ def _scenario(data: dict, sid: str) -> dict:
         lambda d: d["cases"].update(AC13=copy.deepcopy(d["cases"]["AC01"])),
         lambda d: d.pop("cases"),
         lambda d: _scenario(d, "AC12B")["oracle"].update(tool="send_emial_secure"),
-        lambda d: _scenario(d, "AC08")["oracle"].update(tools=["send_mail"]),
+        lambda d: _scenario(d, "AC10")["oracle"].update(tools=["send_mail"]),
     ],
 )
 def test_malformed_catalog_rejected(raw, mutation) -> None:

@@ -2,7 +2,9 @@
 
 from .dal import (
     BENIGN_VIOLATION_ORACLE,
+    AttributionRecord,
     ConfigMetrics,
+    DecisionRecord,
     RunLog,
     RunRecord,
     StepRecord,
@@ -13,7 +15,9 @@ from .schema import SCHEMA_VERSION
 __all__ = [
     "BENIGN_VIOLATION_ORACLE",
     "SCHEMA_VERSION",
+    "AttributionRecord",
     "ConfigMetrics",
+    "DecisionRecord",
     "RunLog",
     "RunRecord",
     "StepRecord",

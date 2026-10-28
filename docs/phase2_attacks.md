@@ -1,6 +1,8 @@
 # Phase 2 — Attack scenarios
 
-Status: done. Phase 2 attacks the undefended Phase 1 agent and measures how often
+Status: done. Phase 3 later moved AC08 to the benign set as BT-013; the numbers on
+this page were measured with AC08 in the attack set and stay as recorded (see
+[phase3_guardrails.md](phase3_guardrails.md)). Phase 2 attacks the undefended Phase 1 agent and measures how often
 each attack succeeds, so Phase 3's guardrails have a baseline to beat. The
 baseline expectation is that **attacks succeed**: there is nothing to defend
 otherwise. Machine-generated numbers live in [phase2_results.md](phase2_results.md);

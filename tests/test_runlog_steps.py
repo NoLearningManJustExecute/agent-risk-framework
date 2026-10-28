@@ -137,4 +137,4 @@ def test_v1_database_upgrades_in_place(tmp_path) -> None:
         log.record_step(StepRecord(run_id=run_id, step_index=0, model_text="ok", latency_ms=1.0))
         assert len(list(log.steps(run_id))) == 1
         (version,) = log._conn.execute("PRAGMA user_version").fetchone()
-    assert version == SCHEMA_VERSION == 3
+    assert version == SCHEMA_VERSION == 4

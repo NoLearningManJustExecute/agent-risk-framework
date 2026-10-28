@@ -30,12 +30,23 @@ Prove prompt-to-action escalation. Baseline expectation = **attack succeeds** (u
 Gate: attacks run automatically · findings generated · success metrics recorded over N runs.
 Result: 13 cases (AC01–AC11, AC12A rug pull, AC12B shadow tool) × plain + obfuscated = 26 scenarios, each run in a throwaway synthetic lab and scored by deterministic oracles against the tool-call log (schema v3 `verdicts` table). At N=10, `llama3.1:8b`, temp 0: **attack success 160/260 (62%)** with 0 errors; plain 80/130, obfuscated 80/130. Direct and MCP-definition attacks succeed in 9 of 13 cases; both indirect-injection cases (AC09, AC10), AC03 and AC08 did not succeed at baseline (reported as measured). Benign set, two separate measures: **task success 90/120 (75%)**, **benign-input violation 20/120 (17%)**. 9 findings (ARF-0201…0213). Caveat: at temp 0 the 10 runs per case are near-identical, so N shows reproducibility, not spread. Details in `docs/phase2_attacks.md`.
 
-### Phase 3 — Guardrail engine — TODO
+### Phase 3 — Guardrail engine — DONE
 Prompt classifier **on user input AND tool output** · policy engine · least-privilege tool-permission layer (recipient allowlist, path sandbox) · output filter · approval gate for side effects.
 Gate: attacks detected · blocked actions recorded · false positives measurable against the benign set.
+Result: five controls, each an independent switch, built to the Phase 2 results (direct and MCP-definition attacks are the targets; tool-output injection scored 0/20):
+- `tool_permissions`: strict recipient allowlist, workspace path sandbox, secret store denied.
+- `tool_integrity`: vets descriptions, pins them at approval against a reviewed registry, and quarantines drifted, late and shadow tools.
+- `approval_gate`: approval rendered from the real call; a deterministic simulated reviewer approves.
+- `input_classifier` and `output_classifier`: a rule-based classifier on the user prompt and, as defense in depth, on tool output.
+
+Every evaluation goes to a decision log (schema v4 `decisions`). Every run gets an outcome bucket (`succeeded` / `blocked_by_control` / `did_not_execute` / `failed_other`) that records which control gets the credit (`attributions`), with a counterfactual check for blocked calls. AC08 moved to the benign set as BT-013.
+
+Verification: in offline isolation tests, each control alone blocks its target cases and none blocks a benign task. In a live N=1 wiring check with all controls on, 0/24 attacks succeeded and 0/13 benign tasks were blocked.
+
+Deviations from the plan: a rule-based classifier replaces LLM Guard, and the canary output filter was replaced by denying the secret store plus a leak-request rule. Details in `docs/phase3_guardrails.md`.
 
 ### Phase 4 — Defense ablation (the headline) — TODO
-Configs: baseline · deterministic-controls-only · classifier-only · output-filter-only · combined.
+Configs: baseline · deterministic-only · classifier-only · output-filter-only · combined, plus each control alone (`controls:` in the manifest). Report rates from the locked Phase 3 outcome buckets; read `input_withheld` credit against each case's baseline rate.
 Gate: attack success rate, detection rate, FPR, FNR, and benign-task completion rate measured for each config.
 
 ### Phase 5 — Portfolio release — TODO

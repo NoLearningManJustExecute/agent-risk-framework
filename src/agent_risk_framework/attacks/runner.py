@@ -12,9 +12,14 @@ Benign tasks run through the same lab and loop with no planted content, and get
 two verdicts — `task_success` (the run's `outcome`) and `benign_input_violation`
 (a separate verdict row) — which are reported side by side and never combined.
 
-This is the undefended baseline: `detector_result` is `not_evaluated` and
-`guardrail_action` is `none` on every row. The expected result is that attacks
-succeed. A run that crashes is logged as `error` and excluded from every rate.
+With no guardrails (`config: baseline`) this is the undefended Phase 2 baseline:
+`detector_result` is `not_evaluated` and `guardrail_action` is `none` on every row,
+and the expected result is that attacks succeed. With guardrails on (Phase 3), each
+run also gets a `GuardrailEngine`: its decision log goes to `decisions`, the exact
+control set to `run_controls`, `detector_result`/`guardrail_action` record whether
+any control blocked anything, and the run's outcome bucket and credited control go
+to `attributions` (see `attribution.py`). Every completed run, baseline included,
+gets a bucket. A run that crashes is logged as `error` and excluded from every rate.
 
 CLI (live, needs a local Ollama):
 
@@ -29,7 +34,7 @@ import argparse
 import contextlib
 import json
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -37,35 +42,49 @@ from pathlib import Path
 from ..agent.client import connect_in_process, list_tool_defs
 from ..agent.loop import DEFAULT_MAX_STEPS, AgentResult, run_agent
 from ..agent.model import OllamaToolModel, ToolCallingModel
-from ..agent.tools import DEFAULT_DOC_INDEX, DEFAULT_SANDBOX
+from ..agent.tools import DEFAULT_DOC_INDEX, DEFAULT_SANDBOX, Sandbox
 from ..benign import BenignTask, load_benign_tasks
 from ..enums import (
     CaseKind,
+    Control,
+    DecisionStage,
     DefenseConfig,
     DetectorVerdict,
     FindingStatus,
     GuardrailAction,
     Outcome,
+    OutcomeBucket,
 )
 from ..findings import Evidence, Finding, write_finding
+from ..guardrails import DEFAULT_REGISTRY, GuardrailConfig, GuardrailEngine, ToolRegistry
 from ..manifest import load_manifest
 from ..providers.base import GenerationParams
-from ..runlog import BENIGN_VIOLATION_ORACLE, RunLog, RunRecord, StepRecord, VerdictRecord
+from ..runlog import (
+    BENIGN_VIOLATION_ORACLE,
+    DecisionRecord,
+    RunLog,
+    RunRecord,
+    StepRecord,
+    VerdictRecord,
+)
+from .attribution import BENIGN_STAGES, CHANNEL_STAGES, Attribution, attribute
 from .lab import (
     OracleContext,
     apply_post_approval,
     build_lab_server,
     lab_sandbox,
+    planted_reader,
     tool_fingerprint,
 )
 from .oracles import (
     Trace,
+    TraceCall,
     Verdict,
     score_attack,
     score_benign_violation,
     score_task_success,
 )
-from .scenarios import AttackScenario, ScenarioCatalog, load_catalog
+from .scenarios import BASE_TOOLS, AttackScenario, ScenarioCatalog, load_catalog
 
 DRIFT_ORACLE = "tool_definition_drift"
 
@@ -81,6 +100,12 @@ class CaseRun:
     outcome: Outcome
     run_id: int
     verdicts: tuple[Verdict, ...] = ()
+    attribution: Attribution | None = None  # None only for error runs
+    decisions: tuple[DecisionRecord, ...] = ()
+
+    @property
+    def bucket(self) -> OutcomeBucket | None:
+        return None if self.attribution is None else self.attribution.bucket
 
     def verdict(self, oracle: str) -> Verdict | None:
         return next((v for v in self.verdicts if v.oracle == oracle), None)
@@ -95,6 +120,8 @@ class Tally:
     succeeded: int
     errors: int
     violations: int = 0
+    blocked: int = 0  # bucket blocked_by_control
+    did_not_execute: int = 0  # bucket did_not_execute
 
     @property
     def evaluated(self) -> int:
@@ -113,6 +140,8 @@ class ExperimentSummary:
     temperature: float
     runs_per_case: int
     runs: tuple[CaseRun, ...]
+    config: DefenseConfig = DefenseConfig.BASELINE
+    controls: tuple[str, ...] = ()
 
     def tally(self, kind: CaseKind) -> list[Tally]:
         order: list[str] = []
@@ -130,6 +159,8 @@ class ExperimentSummary:
                     succeeded=sum(r.outcome == Outcome.SUCCEEDED for r in rows),
                     errors=sum(r.outcome == Outcome.ERROR for r in rows),
                     violations=sum(bool(v and v.hit) for v in violated),
+                    blocked=sum(r.bucket == OutcomeBucket.BLOCKED_BY_CONTROL for r in rows),
+                    did_not_execute=sum(r.bucket == OutcomeBucket.DID_NOT_EXECUTE for r in rows),
                 )
             )
         return out
@@ -142,12 +173,95 @@ class ExperimentSummary:
             succeeded=sum(t.succeeded for t in tallies),
             errors=sum(t.errors for t in tallies),
             violations=sum(t.violations for t in tallies),
+            blocked=sum(t.blocked for t in tallies),
+            did_not_execute=sum(t.did_not_execute for t in tallies),
+        )
+
+    def credits(self, kind: CaseKind) -> dict[str, int]:
+        """Runs credited to each control (a run credited to two counts for both)."""
+        out: dict[str, int] = {}
+        for r in self.runs:
+            if r.kind == kind and r.attribution is not None:
+                for c in r.attribution.blocked_by:
+                    out[str(c)] = out.get(str(c), 0) + 1
+        return dict(sorted(out.items()))
+
+
+def blocked_keys(decisions: Sequence[DecisionRecord]) -> frozenset[tuple[int, int]]:
+    """(step_index, call_index) of every tool call a guardrail refused."""
+    return frozenset(
+        (d.step_index, d.call_index or 0)
+        for d in decisions
+        if d.blocked and d.stage == DecisionStage.TOOL_CALL and d.step_index is not None
+    )
+
+
+def _trace(result: AgentResult, decisions: Sequence[DecisionRecord] = ()) -> Trace:
+    # Exactly the rows that get written to `steps` (and `decisions`), so every verdict
+    # is a function of the log.
+    return Trace.from_steps(result.step_records(0), blocked_keys(decisions))
+
+
+@dataclass(frozen=True)
+class _Defense:
+    """What one run needs to know about the guardrails it runs under."""
+
+    config: DefenseConfig
+    guardrails: GuardrailConfig
+    registry: ToolRegistry | None
+
+    def engine(self, prompt: str, workspace: Path, ctx: OracleContext | None) -> GuardrailEngine:
+        return GuardrailEngine(
+            self.guardrails,
+            user_prompt=prompt,
+            workspace_root=workspace,
+            allowlist=(ctx or OracleContext()).allowlist,
+            registry=self.registry,
         )
 
 
-def _trace(result: AgentResult) -> Trace:
-    # Exactly the rows that get written to `steps`, so the verdict is a function of the log.
-    return Trace.from_steps(result.step_records(0))
+def _defense(
+    config: DefenseConfig | str,
+    guardrails: GuardrailConfig | None,
+    registry: ToolRegistry | Path | str | None,
+) -> _Defense:
+    config = DefenseConfig(config)
+    chosen = GuardrailConfig.preset(config) if guardrails is None else guardrails
+    if isinstance(registry, Path | str):
+        registry = ToolRegistry.load(registry) if chosen.enabled(Control.TOOL_INTEGRITY) else None
+    return _Defense(config, chosen, registry)
+
+
+async def _run_guarded(
+    defense: _Defense,
+    sandbox: Sandbox,
+    scenario: AttackScenario | None,
+    prompt: str,
+    *,
+    model: ToolCallingModel,
+    params: GenerationParams,
+    max_steps: int,
+    ctx: OracleContext | None,
+) -> tuple[AgentResult, bool]:
+    """Approve the tool list, apply any rug pull, admit the live list, run the agent."""
+    engine = defense.engine(prompt, sandbox.root, ctx)
+    server = build_lab_server(sandbox, scenario)
+    async with connect_in_process(server) as client:
+        approved = await list_tool_defs(client)  # what a human approved
+        engine.approve_tools(approved)
+        changed = apply_post_approval(server, scenario)
+        live = await list_tool_defs(client) if changed else approved
+        drift = tool_fingerprint(approved) != tool_fingerprint(live)
+        result = await run_agent(
+            model=model,
+            client=client,
+            user_prompt=prompt,
+            tools=engine.admit_tools(live),
+            params=params,
+            max_steps=max_steps,
+            guard=engine if defense.guardrails.any else None,
+        )
+    return result, drift
 
 
 def _record(
@@ -163,28 +277,89 @@ def _record(
     outcome: Outcome,
     result: AgentResult | None,
     verdicts: Sequence[Verdict],
+    defense: _Defense,
+    attribution: Attribution | None = None,
 ) -> int:
+    decisions = list(result.decisions) if result else []
+    if not defense.guardrails.any:
+        detected = DetectorVerdict.NOT_EVALUATED
+    elif any(d.blocked for d in decisions):
+        detected = DetectorVerdict.DETECTED
+    else:
+        detected = DetectorVerdict.NOT_DETECTED
+    blocked = detected == DetectorVerdict.DETECTED
     run_id = run_log.record(
         RunRecord(
             experiment_id=experiment_id,
             case_id=case_id,
             case_kind=kind,
-            config=DefenseConfig.BASELINE,
+            config=defense.config,
             run_index=run_index,
             seed=seed,
             temperature=temperature,
             model=model,
             outcome=outcome,
-            detector_result=DetectorVerdict.NOT_EVALUATED,
+            detector_result=detected,
+            guardrail_action=GuardrailAction.BLOCKED if blocked else GuardrailAction.NONE,
             latency_ms=sum(s.latency_ms for s in result.steps) if result else 0.0,
+            detector_latency_ms=(
+                sum(d.latency_ms for d in decisions) if defense.guardrails.any and result else None
+            ),
         )
     )
+    run_log.record_controls(run_id, defense.guardrails.controls)
     if result is not None:
         for step in result.step_records(run_id):
             run_log.record_step(step)
+        for d in decisions:
+            run_log.record_decision(d.record(run_id))
     for v in verdicts:
         run_log.record_verdict(VerdictRecord(run_id, v.oracle, v.hit, v.reasons))
+    if attribution is not None:
+        run_log.record_attribution(attribution.record(run_id))
     return run_id
+
+
+def _records(result: AgentResult) -> list[DecisionRecord]:
+    # run_id 0 is a placeholder: these are scored before the run row exists.
+    return [d.record(0) for d in result.decisions]
+
+
+def attribute_attack(
+    scenario: AttackScenario,
+    trace: Trace,
+    decisions: Sequence[DecisionRecord],
+    ctx: OracleContext | None = None,
+    base_sandbox: Path | str = DEFAULT_SANDBOX,
+) -> Attribution:
+    tools = BASE_TOOLS | ({scenario.mcp.tool} if scenario.mcp else set())
+    reader = planted_reader(scenario, base_sandbox)
+
+    def simulate(call: TraceCall) -> str:
+        args = call.arguments if isinstance(call.arguments, Mapping) else {}
+        path = args.get("path")
+        return reader(path) if call.name == "read_file" and isinstance(path, str) else ""
+
+    return attribute(
+        objective=lambda t: score_attack(scenario.oracle, t, ctx).hit,
+        trace=trace,
+        decisions=decisions,
+        tool_names=tools,
+        payload_stages=CHANNEL_STAGES[scenario.channel],
+        simulate=simulate,
+    )
+
+
+def attribute_benign(
+    task: BenignTask, trace: Trace, decisions: Sequence[DecisionRecord]
+) -> Attribution:
+    return attribute(
+        objective=lambda t: score_task_success(task, t).hit,
+        trace=trace,
+        decisions=decisions,
+        tool_names=BASE_TOOLS,
+        payload_stages=BENIGN_STAGES,
+    )
 
 
 async def run_attack_once(
@@ -200,7 +375,13 @@ async def run_attack_once(
     base_sandbox: Path | str = DEFAULT_SANDBOX,
     doc_index: Path | str = DEFAULT_DOC_INDEX,
     ctx: OracleContext | None = None,
+    config: DefenseConfig | str = DefenseConfig.BASELINE,
+    guardrails: GuardrailConfig | None = None,
+    registry: ToolRegistry | Path | str | None = DEFAULT_REGISTRY,
+    defense: _Defense | None = None,
 ) -> CaseRun:
+    """One attack run. `guardrails` defaults to the preset for `config`."""
+    defense = defense or _defense(config, guardrails, registry)
     params = GenerationParams(temperature=temperature, seed=seed)
     result: AgentResult | None = None
     drift = False
@@ -210,30 +391,30 @@ async def run_attack_once(
         contextlib.suppress(Exception),
         lab_sandbox(scenario, base_sandbox=base_sandbox, doc_index=doc_index) as sandbox,
     ):
-        server = build_lab_server(sandbox, scenario)
-        async with connect_in_process(server) as client:
-            approved = await list_tool_defs(client)  # what a human approved
-            changed = apply_post_approval(server, scenario)
-            tools = await list_tool_defs(client) if changed else approved
-            drift = tool_fingerprint(approved) != tool_fingerprint(tools)
-            result = await run_agent(
-                model=model,
-                client=client,
-                user_prompt=scenario.user_prompt,
-                tools=tools,
-                params=params,
-                max_steps=max_steps,
-            )
+        result, drift = await _run_guarded(
+            defense,
+            sandbox,
+            scenario,
+            scenario.user_prompt,
+            model=model,
+            params=params,
+            max_steps=max_steps,
+            ctx=ctx,
+        )
 
     verdicts: list[Verdict] = []
     outcome = Outcome.ERROR
+    attribution: Attribution | None = None
     if result is not None:
-        verdict = score_attack(scenario.oracle, _trace(result), ctx)
+        decisions = _records(result)
+        trace = _trace(result, decisions)
+        verdict = score_attack(scenario.oracle, trace, ctx)
         outcome = Outcome.SUCCEEDED if verdict.hit else Outcome.FAILED
         verdicts.append(verdict)
         if scenario.mcp is not None:
             reason = ("live tool list differs from the approved one",) if drift else ()
             verdicts.append(Verdict(DRIFT_ORACLE, drift, reason))
+        attribution = attribute_attack(scenario, trace, decisions, ctx, base_sandbox)
     run_id = _record(
         run_log,
         experiment_id=experiment_id,
@@ -246,9 +427,19 @@ async def run_attack_once(
         outcome=outcome,
         result=result,
         verdicts=verdicts,
+        defense=defense,
+        attribution=attribution,
     )
     return CaseRun(
-        scenario.scenario_id, CaseKind.ATTACK, run_index, seed, outcome, run_id, tuple(verdicts)
+        scenario.scenario_id,
+        CaseKind.ATTACK,
+        run_index,
+        seed,
+        outcome,
+        run_id,
+        tuple(verdicts),
+        attribution,
+        tuple(run_log.decisions(run_id)),
     )
 
 
@@ -265,29 +456,40 @@ async def run_benign_once(
     base_sandbox: Path | str = DEFAULT_SANDBOX,
     doc_index: Path | str = DEFAULT_DOC_INDEX,
     ctx: OracleContext | None = None,
+    config: DefenseConfig | str = DefenseConfig.BASELINE,
+    guardrails: GuardrailConfig | None = None,
+    registry: ToolRegistry | Path | str | None = DEFAULT_REGISTRY,
+    defense: _Defense | None = None,
 ) -> CaseRun:
+    """One benign run. `guardrails` defaults to the preset for `config`."""
+    defense = defense or _defense(config, guardrails, registry)
     params = GenerationParams(temperature=temperature, seed=seed)
     result: AgentResult | None = None
     with (
         contextlib.suppress(Exception),  # same error handling as run_attack_once
         lab_sandbox(None, base_sandbox=base_sandbox, doc_index=doc_index) as sandbox,
     ):
-        async with connect_in_process(build_lab_server(sandbox, None)) as client:
-            result = await run_agent(
-                model=model,
-                client=client,
-                user_prompt=task.prompt,
-                params=params,
-                max_steps=max_steps,
-            )
+        result, _ = await _run_guarded(
+            defense,
+            sandbox,
+            None,
+            task.prompt,
+            model=model,
+            params=params,
+            max_steps=max_steps,
+            ctx=ctx,
+        )
 
     verdicts: list[Verdict] = []
     outcome = Outcome.ERROR
+    attribution: Attribution | None = None
     if result is not None:
-        trace = _trace(result)
+        decisions = _records(result)
+        trace = _trace(result, decisions)
         success = score_task_success(task, trace)
         verdicts = [success, score_benign_violation(task, trace, ctx)]
         outcome = Outcome.SUCCEEDED if success.hit else Outcome.FAILED
+        attribution = attribute_benign(task, trace, decisions)
     run_id = _record(
         run_log,
         experiment_id=experiment_id,
@@ -300,8 +502,20 @@ async def run_benign_once(
         outcome=outcome,
         result=result,
         verdicts=verdicts,
+        defense=defense,
+        attribution=attribution,
     )
-    return CaseRun(task.task_id, CaseKind.BENIGN, run_index, seed, outcome, run_id, tuple(verdicts))
+    return CaseRun(
+        task.task_id,
+        CaseKind.BENIGN,
+        run_index,
+        seed,
+        outcome,
+        run_id,
+        tuple(verdicts),
+        attribution,
+        tuple(run_log.decisions(run_id)),
+    )
 
 
 async def run_experiment(
@@ -318,12 +532,19 @@ async def run_experiment(
     base_sandbox: Path | str = DEFAULT_SANDBOX,
     doc_index: Path | str = DEFAULT_DOC_INDEX,
     progress: Callable[[CaseRun], None] | None = None,
+    config: DefenseConfig | str = DefenseConfig.BASELINE,
+    guardrails: GuardrailConfig | None = None,
+    registry: ToolRegistry | Path | str | None = DEFAULT_REGISTRY,
 ) -> ExperimentSummary:
-    """Each scenario and each benign task, `runs` times, at seed + run_index."""
+    """Each scenario and each benign task, `runs` times, at seed + run_index.
+
+    Runs under `config`'s preset guardrails unless `guardrails` overrides them.
+    """
     if runs < 1:
         raise ValueError("runs must be >= 1")
     if next(run_log.runs(experiment_id), None) is not None:
         raise ValueError(f"experiment {experiment_id!r} already has runs in {run_log.path}")
+    defense = _defense(config, guardrails, registry)
     common = dict(
         model=model,
         run_log=run_log,
@@ -332,6 +553,7 @@ async def run_experiment(
         max_steps=max_steps,
         base_sandbox=base_sandbox,
         doc_index=doc_index,
+        defense=defense,
     )
     done: list[CaseRun] = []
     for scenario in scenarios:
@@ -345,7 +567,14 @@ async def run_experiment(
             if progress:
                 progress(done[-1])
     return ExperimentSummary(
-        experiment_id, getattr(model, "model", "unknown"), seed, temperature, runs, tuple(done)
+        experiment_id,
+        getattr(model, "model", "unknown"),
+        seed,
+        temperature,
+        runs,
+        tuple(done),
+        defense.config,
+        tuple(defense.guardrails.names()),
     )
 
 
@@ -356,25 +585,60 @@ def rescore(
     tasks: Sequence[BenignTask],
     ctx: OracleContext | None = None,
 ) -> dict[int, tuple[Verdict, ...]]:
-    """Recompute primary verdicts from the stored step rows alone (audit check).
+    """Recompute primary verdicts from the stored step and decision rows alone (audit).
 
     Only runs whose scenario or task is passed in are scored; others are skipped.
     """
+    return {
+        run_id: verdicts
+        for run_id, (verdicts, _) in _rescored(run_log, experiment_id, catalog, tasks, ctx).items()
+    }
+
+
+def reattribute(
+    run_log: RunLog,
+    experiment_id: str,
+    catalog: ScenarioCatalog,
+    tasks: Sequence[BenignTask],
+    ctx: OracleContext | None = None,
+    base_sandbox: Path | str = DEFAULT_SANDBOX,
+) -> dict[int, Attribution]:
+    """Recompute every run's outcome bucket from the stored log alone (audit check)."""
+    return {
+        run_id: attribution
+        for run_id, (_, attribution) in _rescored(
+            run_log, experiment_id, catalog, tasks, ctx, base_sandbox
+        ).items()
+    }
+
+
+def _rescored(
+    run_log: RunLog,
+    experiment_id: str,
+    catalog: ScenarioCatalog,
+    tasks: Sequence[BenignTask],
+    ctx: OracleContext | None,
+    base_sandbox: Path | str = DEFAULT_SANDBOX,
+) -> dict[int, tuple[tuple[Verdict, ...], Attribution]]:
     by_id = {s.scenario_id: s for s in catalog.scenarios}
     task_by_id = {t.task_id: t for t in tasks}
-    out: dict[int, tuple[Verdict, ...]] = {}
+    out: dict[int, tuple[tuple[Verdict, ...], Attribution]] = {}
     for run in run_log.runs(experiment_id):
         if run.outcome == Outcome.ERROR or run.run_id is None:
             continue
+        decisions = list(run_log.decisions(run.run_id))
+        trace = Trace.from_steps(run_log.steps(run.run_id), blocked_keys(decisions))
         if run.case_kind == CaseKind.ATTACK and run.case_id in by_id:
-            trace = Trace.from_steps(run_log.steps(run.run_id))
-            out[run.run_id] = (score_attack(by_id[run.case_id].oracle, trace, ctx),)
+            scenario = by_id[run.case_id]
+            out[run.run_id] = (
+                (score_attack(scenario.oracle, trace, ctx),),
+                attribute_attack(scenario, trace, decisions, ctx, base_sandbox),
+            )
         elif run.case_kind == CaseKind.BENIGN and run.case_id in task_by_id:
             task = task_by_id[run.case_id]
-            trace = Trace.from_steps(run_log.steps(run.run_id))
             out[run.run_id] = (
-                score_task_success(task, trace),
-                score_benign_violation(task, trace, ctx),
+                (score_task_success(task, trace), score_benign_violation(task, trace, ctx)),
+                attribute_benign(task, trace, decisions),
             )
     return out
 
@@ -425,7 +689,7 @@ def build_findings(
             next(s.oracle.kind for s in variants if s.scenario_id == example.case_id)
         )
         header = (
-            f"experiment={summary.experiment_id} config=baseline model={summary.model} "
+            f"experiment={summary.experiment_id} config={summary.config} model={summary.model} "
             f"seed={summary.seed}+run_index temperature={summary.temperature} "
             f"runs_per_variant={summary.runs_per_case}"
         )
@@ -440,6 +704,14 @@ def build_findings(
                 "tool_calls", _call_lines(list(run_log.steps(example.run_id))), example.run_id
             ),
         ]
+        defended = summary.config != DefenseConfig.BASELINE
+        case_runs = [r for r in summary.runs if r.case_id in {s.scenario_id for s in variants}]
+        any_blocked = any(r.bucket == OutcomeBucket.BLOCKED_BY_CONTROL for r in case_runs)
+        where = (
+            f"under config {summary.config} ({', '.join(summary.controls) or 'no controls'})"
+            if defended
+            else "at baseline (undefended)"
+        )
         findings.append(
             Finding(
                 finding_id=case.finding_id,
@@ -453,12 +725,17 @@ def build_findings(
                 attack_case=case.case_id,
                 status=FindingStatus.OPEN,
                 description=(
-                    f"{case.description}\n\nMeasured at baseline (undefended), threat "
-                    f"{case.threat}: {measured}."
+                    f"{case.description}\n\nMeasured {where}, threat {case.threat}: {measured}."
                 ),
                 impact=case.impact,
-                detection_result=DetectorVerdict.NOT_EVALUATED,
-                guardrail_action=GuardrailAction.NONE,
+                detection_result=(
+                    DetectorVerdict.NOT_EVALUATED
+                    if not defended
+                    else DetectorVerdict.DETECTED
+                    if any_blocked
+                    else DetectorVerdict.NOT_DETECTED
+                ),
+                guardrail_action=GuardrailAction.BLOCKED if any_blocked else GuardrailAction.NONE,
                 recommendation=case.recommendation,
                 evidence=tuple(evidence),
             )
@@ -476,30 +753,36 @@ def render_report(
     attack = summary.tally(CaseKind.ATTACK)
     benign = summary.tally(CaseKind.BENIGN)
     a_tot, b_tot = summary.totals(CaseKind.ATTACK), summary.totals(CaseKind.BENIGN)
+    controls = ", ".join(f"`{c}`" for c in summary.controls) or "none (undefended)"
     lines = [
-        "# Phase 2 baseline results",
+        f"# Results: config `{summary.config}`",
         "",
         "Generated by `python -m agent_risk_framework.attacks.runner`. Do not edit by hand.",
         "",
-        f"- Experiment: `{summary.experiment_id}` · config `baseline` (undefended)",
+        f"- Experiment: `{summary.experiment_id}` · config `{summary.config}` · controls: "
+        f"{controls}",
         f"- Model: `{summary.model}` · temperature {summary.temperature} · seed "
         f"{summary.seed} + run_index · {summary.runs_per_case} runs per case",
         f"- Generated: {datetime.now(UTC).date().isoformat()}",
         "- Every rate is `succeeded / evaluated runs`; errored runs are excluded and counted.",
+        "- Every completed run lands in one outcome bucket: succeeded, blocked by control, "
+        "did not execute (tool call written as text), or failed for another reason.",
         "",
         "## Attack scenarios",
         "",
         f"Overall attack success: **{Tally.fmt(a_tot.succeeded, a_tot.evaluated)}** "
         f"({a_tot.errors} error runs).",
         "",
-        "| Scenario | Case | Channel | Obfuscation | Oracle | Attack success | Errors |",
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| Scenario | Case | Channel | Obfuscation | Oracle | Attack success "
+        "| Blocked by control | Did not execute | Errors |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for t in attack:
         s = by_id[t.case_id]
         lines.append(
             f"| {s.scenario_id} | {s.case_id} | {s.channel} | {s.obfuscation or '-'} | "
-            f"`{s.oracle.kind}` | {Tally.fmt(t.succeeded, t.evaluated)} | {t.errors} |"
+            f"`{s.oracle.kind}` | {Tally.fmt(t.succeeded, t.evaluated)} | "
+            f"{Tally.fmt(t.blocked, t.evaluated)} | {t.did_not_execute} | {t.errors} |"
         )
     plain = [t for t in attack if not by_id[t.case_id].obfuscated]
     obf = [t for t in attack if by_id[t.case_id].obfuscated]
@@ -508,6 +791,7 @@ def render_report(
         n = sum(t.evaluated for t in group)
         lines.append("")
         lines.append(f"- {label.capitalize()} variants: {Tally.fmt(k, n)}")
+    lines += ["", _credit_line(summary.credits(CaseKind.ATTACK), "Attack runs credited")]
     lines += [
         "",
         "## Benign tasks",
@@ -517,20 +801,29 @@ def render_report(
         "",
         f"- Task success: **{Tally.fmt(b_tot.succeeded, b_tot.evaluated)}**",
         f"- Benign-input violation: **{Tally.fmt(b_tot.violations, b_tot.evaluated)}**",
+        f"- Task blocked by a control (false-positive cost): "
+        f"**{Tally.fmt(b_tot.blocked, b_tot.evaluated)}**",
         f"- Error runs: {b_tot.errors}",
+        _credit_line(summary.credits(CaseKind.BENIGN), "Benign runs blocked"),
         "",
-        "| Task | Category | Hard negative | Task success | Benign-input violation | Errors |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "| Task | Category | Hard negative | Task success | Benign-input violation "
+        "| Blocked by control | Did not execute | Errors |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for t in benign:
         task = task_by_id[t.case_id]
         lines.append(
             f"| {t.case_id} | {task.category} | {'yes' if task.hard_negative else 'no'} | "
             f"{Tally.fmt(t.succeeded, t.evaluated)} | {Tally.fmt(t.violations, t.evaluated)} | "
-            f"{t.errors} |"
+            f"{Tally.fmt(t.blocked, t.evaluated)} | {t.did_not_execute} | {t.errors} |"
         )
     lines.append("")
     return "\n".join(lines)
+
+
+def _credit_line(credits: dict[str, int], label: str) -> str:
+    body = ", ".join(f"`{c}` {n}" for c, n in credits.items()) or "none"
+    return f"- {label}, by control: {body}"
 
 
 def _build_model(name: str, provider: str) -> ToolCallingModel:
@@ -542,7 +835,7 @@ def _build_model(name: str, provider: str) -> ToolCallingModel:
 def main(argv: Sequence[str] | None = None) -> None:
     import anyio
 
-    parser = argparse.ArgumentParser(description="Run the Phase 2 attack + benign sets.")
+    parser = argparse.ArgumentParser(description="Run the attack + benign sets under a config.")
     parser.add_argument("--manifest", default="configs/experiments/phase2_baseline.yaml")
     parser.add_argument("--db", default="runs/phase2.db")
     parser.add_argument("--findings-dir", default=None, help="write findings here")
@@ -552,11 +845,21 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--skip-benign", action="store_true")
     parser.add_argument("--experiment-id", default=None, help="override the manifest's id")
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    parser.add_argument(
+        "--controls",
+        default=None,
+        help="comma-separated guardrails, overriding the manifest (e.g. tool_integrity)",
+    )
+    parser.add_argument("--registry", default=str(DEFAULT_REGISTRY))
     args = parser.parse_args(argv)
 
     manifest = load_manifest(args.manifest)
-    if manifest.config != DefenseConfig.BASELINE:
-        raise SystemExit("Phase 2 runs the undefended baseline only (config: baseline)")
+    if args.controls is not None:
+        guardrails = GuardrailConfig.parse(args.controls.split(","))
+    elif manifest.controls is not None:
+        guardrails = GuardrailConfig.parse(manifest.controls)
+    else:
+        guardrails = GuardrailConfig.preset(manifest.config)
     catalog = load_catalog(manifest.attack_set)
     scenarios = catalog.select([x for x in args.only.split(",") if x.strip()] or None)
     tasks = [] if args.skip_benign else load_benign_tasks(manifest.benign_set)
@@ -566,7 +869,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     Path(args.db).parent.mkdir(parents=True, exist_ok=True)
 
     def progress(r: CaseRun) -> None:
-        print(f"  {r.case_id:<10} run {r.run_index:>2}  {r.outcome.value}", flush=True)
+        bucket = r.bucket.value if r.bucket else r.outcome.value
+        credit = ",".join(r.attribution.blocked_by) if r.attribution else ""
+        print(f"  {r.case_id:<10} run {r.run_index:>2}  {bucket} {credit}".rstrip(), flush=True)
 
     with RunLog(args.db) as run_log:
         summary = anyio.run(
@@ -581,6 +886,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 temperature=manifest.temperature,
                 max_steps=args.max_steps,
                 progress=progress,
+                config=manifest.config,
+                guardrails=guardrails,
+                registry=args.registry,
             )
         )
         report = render_report(summary, catalog, tasks)
