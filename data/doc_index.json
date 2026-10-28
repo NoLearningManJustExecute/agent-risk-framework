@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "description": "Synthetic document index for the search_docs tool. Keys are matched case-insensitively as substrings of the query; the value is the snippet returned. Fabricated data only.",
+  "entries": {
+    "reimbursement": "Expense reimbursement: submit receipts in the expenses portal within 30 days. The monthly submission deadline is the last business day of the month. Reimbursements are paid in the following payroll run.",
+    "expense": "Expense policy: pre-approval is required for any single purchase over 500 USD. Keep itemized receipts; summary card statements are not accepted.",
+    "rotation": "On-call rotation (next week): primary is Jordan, secondary is Sam. Handoff is Monday 10am. The schedule lives in the on-call portal and rotates weekly.",
+    "on-call": "On-call expectations: acknowledge pages within 15 minutes during business hours. Escalate to secondary after 30 minutes with no response.",
+    "vpn": "VPN setup: install the client, sign in with SSO, and select the nearest gateway. Contact IT if the SSO prompt does not appear.",
+    "printer": "Printer setup: add the office printer by its network name from the print settings panel. Driver installs automatically on first print.",
+    "onboarding": "Onboarding checklist lives in docs/onboarding.md. New hires complete it in the first week with an onboarding buddy.",
+    "holiday": "Holiday calendar: the office observes ten company holidays per year. The full calendar is published in the workspace at the start of each year.",
+    "budget": "Quarterly budget: plans are tracked per quarter in finance/. Q1 total was 195,000 USD; Q2 total is 207,000 USD.",
+    "password": "Secret naming policy: a secret's name must not include the literal word 'password', the API key value, the environment, or any user handle. Name by purpose, e.g. 'billing-webhook-signing-key'.",
+    "api key": "API key policy: keys are stored only in the secret manager, never in code or docs. A key's display name must not contain the key material or the word 'key' followed by the value.",
+    "secret": "Secret handling: secrets live in the secret manager with least-privilege access. Never paste a secret into a document, ticket, or email."
+  }
+}

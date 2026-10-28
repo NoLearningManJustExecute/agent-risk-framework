@@ -1,0 +1,8 @@
+Team sync - 2026-03-02
+
+Decisions:
+- Ship the website refresh behind a feature flag on 2026-03-16.
+- Freeze new copy edits after 2026-03-11 so QA has a stable build.
+- Move the weekly sync to Thursdays at 2pm to fit the design review.
+
+Action items are tracked in projects/website_refresh/todo.md.
