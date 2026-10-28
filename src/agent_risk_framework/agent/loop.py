@@ -12,9 +12,10 @@ Phase 3 hooks the guardrail engine in through the optional `guard` argument:
 the user prompt is screened before the first model turn (a block ends the run with
 no answer), each tool call is checked before dispatch (a blocked call is not
 executed; the model is told it was blocked), and each tool result is checked
-before the model reads it (a withheld result is replaced in the conversation, but
-the step log keeps the real result). With `guard=None` the loop is exactly the
-Phase 1 baseline.
+before the model reads it (a withheld result is replaced in the conversation, a
+redacted one has its secrets replaced by placeholders, and in both cases the step
+log keeps the real result). With `guard=None` the loop is exactly the Phase 1
+baseline.
 
 The loop writes nothing to disk; it returns an `AgentResult` that the caller
 persists (`step_records`) and scores (`observation`, `called_tools`).
@@ -51,7 +52,16 @@ class Guard(Protocol):
 
     def check_result(
         self, call: ToolCall, text: str, step_index: int, call_index: int
-    ) -> tuple[Any, ...]: ...
+    ) -> ResultCheck: ...
+
+
+@dataclass(frozen=True)
+class ResultCheck:
+    """What the guard decided about one tool result before the model reads it."""
+
+    withheld_by: tuple[Any, ...] = ()  # controls that keep the whole result back
+    redacted_by: tuple[Any, ...] = ()  # controls that cut secrets out of it
+    redacted_text: str = ""  # the result with placeholders, when redacted
 
 
 @dataclass(frozen=True)
@@ -61,6 +71,7 @@ class ExecutedCall:
     is_error: bool
     blocked_by: tuple[str, ...] = ()  # controls that refused the call (not executed)
     withheld_by: tuple[str, ...] = ()  # controls that kept the result from the model
+    redacted_by: tuple[str, ...] = ()  # controls that redacted secrets in what it saw
 
 
 @dataclass(frozen=True)
@@ -133,11 +144,16 @@ def _blocked_message(controls: Sequence[Any]) -> str:
     return f"Blocked by guardrail ({', '.join(_names(controls))}): this tool call was not executed."
 
 
+_WITHHELD_BECAUSE = {
+    "output_classifier": "instructions addressed to the assistant",
+    "egress_filter": "secret material",
+}
+
+
 def _withheld_message(controls: Sequence[Any]) -> str:
-    return (
-        f"[Tool output withheld by guardrail ({', '.join(_names(controls))}): it contained "
-        "instructions addressed to the assistant.]"
-    )
+    names = _names(controls)
+    why = " and ".join(_WITHHELD_BECAUSE.get(n, "blocked content") for n in names)
+    return f"[Tool output withheld by guardrail ({', '.join(names)}): it contained {why}.]"
 
 
 def _tool_lines(tools: Sequence[ToolDef]) -> list[str]:
@@ -201,9 +217,21 @@ async def run_agent(
             raw_result = await client.call_tool(call.name, call.arguments)
             text, is_error = result_text(raw_result)
             any_tool_error = any_tool_error or is_error
-            withheld = guard.check_result(call, text, step_index, call_index) if guard else ()
-            seen = _withheld_message(withheld) if withheld else text
-            executed.append(ExecutedCall(call, text, is_error, withheld_by=_names(withheld)))
+            check = guard.check_result(call, text, step_index, call_index) if guard else None
+            seen = text
+            if check is not None and check.withheld_by:
+                seen = _withheld_message(check.withheld_by)
+            elif check is not None and check.redacted_by:
+                seen = check.redacted_text
+            executed.append(
+                ExecutedCall(
+                    call,
+                    text,
+                    is_error,
+                    withheld_by=_names(check.withheld_by) if check else (),
+                    redacted_by=_names(check.redacted_by) if check else (),
+                )
+            )
             messages.append({"role": "tool", "tool_name": call.name, "content": seen})
         steps.append(AgentStep(step_index, turn.text, turn.latency_ms, tuple(executed)))
 

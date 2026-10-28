@@ -28,6 +28,12 @@ Schema v2 adds `steps`, v3 adds `verdicts`, v4 adds `decisions`, `attributions` 
 `run_controls`; older databases upgrade in place because the DDL is idempotent
 (`CREATE TABLE IF NOT EXISTS`) and every addition is a new table, never a new column
 on an existing one.
+
+v5 (Phase 3.5) adds no table; it widens the enum CHECK lists: the `egress_filter`
+control, the `output_redacted` credit basis and the `single-control` config label.
+SQLite cannot alter a CHECK constraint, so a v4 file opened here keeps its old lists:
+it reads, and stores everything v4 could, but rejects the new values. Start a new
+database for runs that use them.
 """
 
 from __future__ import annotations
@@ -46,7 +52,7 @@ from ..enums import (
     values,
 )
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _in(enum_cls) -> str:  # type: ignore[no-untyped-def]

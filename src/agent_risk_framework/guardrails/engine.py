@@ -7,12 +7,13 @@ Stages, in the order a run meets them:
 2. `user_prompt`: `screen_prompt`, before the first model turn. Input classifier;
    a block stops the run.
 3. `tool_call`: `check_call`, before dispatch. Tool permissions, tool integrity
-   (no calls to quarantined tools), approval gate. Every enabled control is
-   evaluated, without short-circuiting, so the log shows each control that would
-   have refused; the call is blocked if any did.
+   (no calls to quarantined tools), approval gate, egress filter (no secret in any
+   argument). Every enabled control is evaluated, without short-circuiting, so the
+   log shows each control that would have refused; the call is blocked if any did.
 4. `tool_result`: `check_result`, before the result reaches the model. Output
-   classifier; a block withholds the result from the model (the tool already ran,
-   and the step log keeps its real result).
+   classifier (a block withholds the result) and egress filter (a block redacts the
+   secrets in it, or withholds it when a secret is only visible encoded). The tool
+   already ran, and the step log keeps its real result.
 
 Every evaluation, allow or block, is one `Decision` in `decisions`, in order. A
 disabled control is never evaluated and never logged. With no control enabled the
@@ -26,6 +27,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..agent.loop import ResultCheck
 from ..agent.model import ToolCall, ToolDef
 from ..agent.policy import ORG_DOMAINS, RECIPIENT_ALLOWLIST, RESTRICTED_PATHS
 from ..enums import Control, DecisionAction, DecisionStage
@@ -33,6 +35,7 @@ from ..runlog import DecisionRecord
 from .approval import ApprovalGate, Reviewer, SimulatedReviewer
 from .classifier import DEFAULT_THRESHOLD, classify
 from .config import GuardrailConfig
+from .egress import EgressFilter
 from .integrity import DefinitionCheck, ToolIntegrity, ToolRegistry
 from .permissions import ToolPermissions
 
@@ -89,6 +92,7 @@ class GuardrailEngine:
         registry: ToolRegistry | None = None,
         reviewer: Reviewer | None = None,
         classifier_threshold: int = DEFAULT_THRESHOLD,
+        egress: EgressFilter | None = None,
     ) -> None:
         self.config = config
         self.user_prompt = user_prompt
@@ -99,6 +103,9 @@ class GuardrailEngine:
         self.integrity = ToolIntegrity(registry)
         self.gate = ApprovalGate(
             reviewer or SimulatedReviewer(user_prompt, org_domains=tuple(org_domains))
+        )
+        self.egress = egress or EgressFilter.for_workspace(
+            workspace_root, restricted=restricted_paths
         )
         self.decisions: list[Decision] = []
 
@@ -184,6 +191,7 @@ class GuardrailEngine:
             (Control.TOOL_PERMISSIONS, lambda: _verdict(self.permissions.problems(call))),
             (Control.TOOL_INTEGRITY, lambda: _verdict(self.integrity.call_problems(call))),
             (Control.APPROVAL_GATE, lambda: self.gate.review(call)),
+            (Control.EGRESS_FILTER, lambda: _verdict(self.egress.arg_problems(call))),
         )
         for control, run in checks:
             if not self._on(control):
@@ -206,20 +214,41 @@ class GuardrailEngine:
 
     def check_result(
         self, call: ToolCall, text: str, step_index: int, call_index: int
-    ) -> tuple[Control, ...]:
-        """The controls that withhold this tool result from the model."""
-        if not self._on(Control.OUTPUT_CLASSIFIER):
-            return ()
-        started = time.perf_counter()
-        verdict = classify(text, threshold=self.threshold)
-        d = self._log(
-            Control.OUTPUT_CLASSIFIER,
-            DecisionStage.TOOL_RESULT,
-            call.name,
-            not verdict.flagged,
-            verdict.reasons(),
-            started,
-            step_index,
-            call_index,
-        )
-        return (Control.OUTPUT_CLASSIFIER,) if d.blocked else ()
+    ) -> ResultCheck:
+        """What the model may see of this tool result: all, redacted, or nothing."""
+        withheld: list[Control] = []
+        redacted_by: tuple[Control, ...] = ()
+        redacted_text = ""
+        if self._on(Control.OUTPUT_CLASSIFIER):
+            started = time.perf_counter()
+            verdict = classify(text, threshold=self.threshold)
+            d = self._log(
+                Control.OUTPUT_CLASSIFIER,
+                DecisionStage.TOOL_RESULT,
+                call.name,
+                not verdict.flagged,
+                verdict.reasons(),
+                started,
+                step_index,
+                call_index,
+            )
+            if d.blocked:
+                withheld.append(Control.OUTPUT_CLASSIFIER)
+        if self._on(Control.EGRESS_FILTER):
+            started = time.perf_counter()
+            redaction = self.egress.redact(text)
+            self._log(
+                Control.EGRESS_FILTER,
+                DecisionStage.TOOL_RESULT,
+                call.name,
+                not redaction.changed,
+                redaction.reasons(),
+                started,
+                step_index,
+                call_index,
+            )
+            if redaction.withheld:
+                withheld.append(Control.EGRESS_FILTER)
+            elif redaction.changed:
+                redacted_by, redacted_text = (Control.EGRESS_FILTER,), redaction.text
+        return ResultCheck(tuple(withheld), redacted_by, redacted_text)

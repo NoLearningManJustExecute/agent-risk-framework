@@ -17,6 +17,8 @@ class DefenseConfig(StrEnum):
     CLASSIFIER_ONLY = "classifier-only"
     OUTPUT_FILTER_ONLY = "output-filter-only"
     COMBINED = "combined"
+    # Exactly one control, named in `run_controls` (the Phase 4 per-control arms).
+    SINGLE_CONTROL = "single-control"
 
 
 class CaseKind(StrEnum):
@@ -54,10 +56,12 @@ class GuardrailAction(StrEnum):
 
 
 class Control(StrEnum):
-    """A Phase 3 guardrail, each one an independent on/off switch.
+    """A guardrail, each one an independent on/off switch.
 
-    The tool-output scan is its own switch (not part of the input classifier) so
-    Phase 4 can isolate it as the `output-filter-only` config.
+    The tool-output injection scan is its own switch (not part of the input
+    classifier), and the secret/PII egress filter (Phase 3.5) is a separate one
+    again: one asks "does this text give the agent instructions?", the other "does
+    this text carry a secret out?".
     """
 
     TOOL_PERMISSIONS = "tool_permissions"
@@ -65,6 +69,7 @@ class Control(StrEnum):
     APPROVAL_GATE = "approval_gate"
     INPUT_CLASSIFIER = "input_classifier"
     OUTPUT_CLASSIFIER = "output_classifier"
+    EGRESS_FILTER = "egress_filter"
 
 
 class DecisionStage(StrEnum):
@@ -107,11 +112,15 @@ class BlockBasis(StrEnum):
     - `input_withheld`: the attack payload was kept from the model (tool output
       withheld, tool definition quarantined). Whether the attack would otherwise have
       worked is not knowable from this run; compare against the baseline rate.
+    - `output_redacted`: counterfactual check passed with redaction undone: the model
+      carried a redaction placeholder into a call, and putting the redacted secret
+      back makes the objective happen (Phase 3.5 egress filter).
     """
 
     CALL_BLOCKED = "call_blocked"
     RUN_STOPPED = "run_stopped"
     INPUT_WITHHELD = "input_withheld"
+    OUTPUT_REDACTED = "output_redacted"
 
 
 class Severity(StrEnum):
