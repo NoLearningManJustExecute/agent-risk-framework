@@ -6,6 +6,7 @@ import pytest
 
 from agent_risk_framework.runlog import (
     BENIGN_VIOLATION_ORACLE,
+    SCHEMA_VERSION,
     RunLog,
     RunRecord,
     VerdictRecord,
@@ -107,7 +108,7 @@ def test_violation_rate_none_without_scored_runs() -> None:
     assert m.benign_input_violation_rate is None
 
 
-def test_v2_database_upgrades_to_v3(tmp_path) -> None:
+def test_v2_database_upgrades_to_current(tmp_path) -> None:
     db = tmp_path / "v2.db"
     with RunLog(db) as log:
         run_id = a_run(log)
@@ -118,4 +119,4 @@ def test_v2_database_upgrades_to_v3(tmp_path) -> None:
         log.record_verdict(VerdictRecord(run_id, "x", True))
         assert len(list(log.verdicts(run_id))) == 1
         (version,) = log._conn.execute("PRAGMA user_version").fetchone()
-    assert version == 3
+    assert version == SCHEMA_VERSION

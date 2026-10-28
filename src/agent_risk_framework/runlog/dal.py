@@ -10,12 +10,24 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ..enums import CaseKind, DefenseConfig, DetectorVerdict, GuardrailAction, Outcome
+from ..enums import (
+    BlockBasis,
+    CaseKind,
+    Control,
+    DecisionAction,
+    DecisionStage,
+    DefenseConfig,
+    DetectorVerdict,
+    GuardrailAction,
+    Outcome,
+    OutcomeBucket,
+)
 from .schema import DDL, SCHEMA_VERSION
 
 SQLITE_INT_MAX = 2**63 - 1
@@ -176,6 +188,95 @@ class VerdictRecord:
             raise TypeError("created_at must be a string")
 
 
+def _check_index(name: str, value: object, *, optional: bool = False) -> None:
+    if value is None and optional:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an int")
+    if not 0 <= value <= SQLITE_INT_MAX:
+        raise ValueError(f"{name} out of range: {value}")
+
+
+def _check_reasons(reasons: object) -> tuple[str, ...]:
+    if isinstance(reasons, str):
+        raise TypeError("reasons must be a sequence of strings, not a string")
+    out = tuple(reasons)  # type: ignore[call-overload]
+    if not all(isinstance(r, str) for r in out):
+        raise TypeError("reasons must be strings")
+    return out
+
+
+@dataclass(frozen=True)
+class DecisionRecord:
+    """One guardrail evaluation: which control, where, on what, allow or block, why.
+
+    `target` names the input: the tool name for a tool definition, call or result,
+    or `user_prompt`. `step_index`/`call_index` tie a call or result decision to its
+    `steps` row; they are None for decisions made before the first model turn.
+    """
+
+    run_id: int
+    seq: int
+    control: Control
+    stage: DecisionStage
+    target: str
+    action: DecisionAction
+    reasons: tuple[str, ...] = ()
+    step_index: int | None = None
+    call_index: int | None = None
+    latency_ms: float = 0.0
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    decision_id: int | None = None
+
+    def __post_init__(self) -> None:
+        for name, enum_cls in (
+            ("control", Control),
+            ("stage", DecisionStage),
+            ("action", DecisionAction),
+        ):
+            object.__setattr__(self, name, enum_cls(getattr(self, name)))
+        _check_index("run_id", self.run_id)
+        _check_index("seq", self.seq)
+        _check_index("step_index", self.step_index, optional=True)
+        _check_index("call_index", self.call_index, optional=True)
+        if not isinstance(self.target, str) or not self.target.strip():
+            raise ValueError("target must be a non-empty string")
+        object.__setattr__(self, "reasons", _check_reasons(self.reasons))
+        if isinstance(self.latency_ms, bool) or not isinstance(self.latency_ms, int | float):
+            raise TypeError("latency_ms must be a number")
+        if not math.isfinite(self.latency_ms) or self.latency_ms < 0:
+            raise ValueError("latency_ms must be finite and >= 0")
+
+    @property
+    def blocked(self) -> bool:
+        return self.action == DecisionAction.BLOCK
+
+
+@dataclass(frozen=True)
+class AttributionRecord:
+    """A completed run's outcome bucket and, for `blocked_by_control`, the credit."""
+
+    run_id: int
+    bucket: OutcomeBucket
+    blocked_by: tuple[Control, ...] = ()
+    basis: BlockBasis | None = None
+    reasons: tuple[str, ...] = ()
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+    def __post_init__(self) -> None:
+        _check_index("run_id", self.run_id)
+        object.__setattr__(self, "bucket", OutcomeBucket(self.bucket))
+        if isinstance(self.blocked_by, str):
+            raise TypeError("blocked_by must be a sequence of controls, not a string")
+        object.__setattr__(self, "blocked_by", tuple(sorted({Control(c) for c in self.blocked_by})))
+        if self.basis is not None:
+            object.__setattr__(self, "basis", BlockBasis(self.basis))
+        credited = self.bucket == OutcomeBucket.BLOCKED_BY_CONTROL
+        if credited != bool(self.blocked_by) or credited != (self.basis is not None):
+            raise ValueError("blocked_by and basis are set exactly for blocked_by_control")
+        object.__setattr__(self, "reasons", _check_reasons(self.reasons))
+
+
 _COLUMNS = (
     "experiment_id",
     "case_id",
@@ -312,6 +413,101 @@ class RunLog:
             data["hit"] = bool(data["hit"])
             data["reasons"] = tuple(json.loads(data["reasons"]))
             yield VerdictRecord(**data)
+
+    def record_decision(self, decision: DecisionRecord) -> int:
+        """Insert one guardrail decision and return its decision_id."""
+        d = decision
+        with self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO decisions (run_id, seq, control, stage, target, action, reasons,"
+                " step_index, call_index, latency_ms, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    d.run_id,
+                    d.seq,
+                    str(d.control),
+                    str(d.stage),
+                    d.target,
+                    str(d.action),
+                    json.dumps(list(d.reasons), ensure_ascii=False),
+                    d.step_index,
+                    d.call_index,
+                    d.latency_ms,
+                    d.created_at,
+                ),
+            )
+        return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def decisions(self, run_id: int) -> Iterator[DecisionRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM decisions WHERE run_id = ? ORDER BY seq", (run_id,)
+        )
+        for row in rows:
+            data = dict(row)
+            data["reasons"] = tuple(json.loads(data["reasons"]))
+            yield DecisionRecord(**data)
+
+    def record_attribution(self, attribution: AttributionRecord) -> None:
+        a = attribution
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO attributions (run_id, bucket, blocked_by, basis, reasons, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    a.run_id,
+                    str(a.bucket),
+                    json.dumps([str(c) for c in a.blocked_by]),
+                    None if a.basis is None else str(a.basis),
+                    json.dumps(list(a.reasons), ensure_ascii=False),
+                    a.created_at,
+                ),
+            )
+
+    def attribution(self, run_id: int) -> AttributionRecord | None:
+        row = self._conn.execute(
+            "SELECT * FROM attributions WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["blocked_by"] = tuple(json.loads(data["blocked_by"]))
+        data["reasons"] = tuple(json.loads(data["reasons"]))
+        return AttributionRecord(**data)
+
+    def record_controls(self, run_id: int, controls: Iterable[Control | str]) -> None:
+        """Record the exact guardrail set a run used (empty for the undefended agent)."""
+        _check_index("run_id", run_id)
+        names = sorted({str(Control(c)) for c in controls})
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO run_controls (run_id, controls, created_at) VALUES (?, ?, ?)",
+                (run_id, json.dumps(names), datetime.now(UTC).isoformat()),
+            )
+
+    def controls(self, run_id: int) -> frozenset[Control] | None:
+        row = self._conn.execute(
+            "SELECT controls FROM run_controls WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return None if row is None else frozenset(Control(c) for c in json.loads(row[0]))
+
+    def bucket_counts(self, experiment_id: str) -> dict[str, dict[str, Counter[str]]]:
+        """config -> case kind -> {bucket: runs}, plus `blocked_by:<control>` credits.
+
+        A run credited to two controls counts once under `blocked_by_control` and
+        once under each control's `blocked_by:` key.
+        """
+        rows = self._conn.execute(
+            "SELECT r.config, r.case_kind, a.bucket, a.blocked_by FROM attributions a"
+            " JOIN runs r ON r.run_id = a.run_id WHERE r.experiment_id = ?",
+            (experiment_id,),
+        )
+        out: dict[str, dict[str, Counter[str]]] = {}
+        for config, kind, bucket, blocked_by in rows:
+            counts = out.setdefault(config, {}).setdefault(kind, Counter())
+            counts[bucket] += 1
+            for control in json.loads(blocked_by):
+                counts[f"blocked_by:{control}"] += 1
+        return out
 
     def _verdict_hits(self, experiment_id: str, oracle: str) -> dict[int, bool]:
         rows = self._conn.execute(

@@ -6,7 +6,15 @@ conversation as `tool` messages, then the loop repeats until the model answers
 with no tool call or a hard `max_steps` cap is hit (the cap bounds runaway loops;
 threat T13 / ASI08 / LLM06:2026). The agent is over-permissioned on purpose: any
 listed tool may be called with any arguments, and nothing inspects or blocks a
-call — defenses arrive in Phase 3.
+call unless a `guard` is passed.
+
+Phase 3 hooks the guardrail engine in through the optional `guard` argument:
+the user prompt is screened before the first model turn (a block ends the run with
+no answer), each tool call is checked before dispatch (a blocked call is not
+executed; the model is told it was blocked), and each tool result is checked
+before the model reads it (a withheld result is replaced in the conversation, but
+the step log keeps the real result). With `guard=None` the loop is exactly the
+Phase 1 baseline.
 
 The loop writes nothing to disk; it returns an `AgentResult` that the caller
 persists (`step_records`) and scores (`observation`, `called_tools`).
@@ -16,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 import anyio
 
@@ -28,13 +37,30 @@ from .model import ToolCall, ToolCallingModel, ToolDef
 from .policy import build_system_prompt
 
 DEFAULT_MAX_STEPS = 8
+STOPPED_BY_GUARD = "blocked"
+
+
+class Guard(Protocol):
+    """What the loop needs from a guardrail engine (`guardrails.GuardrailEngine`)."""
+
+    decisions: Sequence[Any]
+
+    def screen_prompt(self, prompt: str | None = None) -> bool: ...
+
+    def check_call(self, call: ToolCall, step_index: int, call_index: int) -> tuple[Any, ...]: ...
+
+    def check_result(
+        self, call: ToolCall, text: str, step_index: int, call_index: int
+    ) -> tuple[Any, ...]: ...
 
 
 @dataclass(frozen=True)
 class ExecutedCall:
     call: ToolCall
-    result_text: str
+    result_text: str  # what the tool returned, or the block notice if it never ran
     is_error: bool
+    blocked_by: tuple[str, ...] = ()  # controls that refused the call (not executed)
+    withheld_by: tuple[str, ...] = ()  # controls that kept the result from the model
 
 
 @dataclass(frozen=True)
@@ -49,9 +75,10 @@ class AgentStep:
 class AgentResult:
     final_text: str
     steps: tuple[AgentStep, ...]
-    stopped_reason: str  # "final" (model answered) | "max_steps" (cap hit)
+    stopped_reason: str  # "final" (model answered) | "max_steps" (cap hit) | "blocked"
     model: str
     tool_error: bool = field(default=False)  # any tool call returned an error result
+    decisions: tuple[Any, ...] = ()  # the guard's decision log, in order (empty: no guard)
 
     @property
     def called_tools(self) -> frozenset[str]:
@@ -97,6 +124,22 @@ class AgentResult:
         return records
 
 
+def _names(controls: Sequence[Any]) -> tuple[str, ...]:
+    return tuple(sorted(str(c) for c in controls))
+
+
+def _blocked_message(controls: Sequence[Any]) -> str:
+    # Deliberately generic: the reasons stay in the decision log, not in model context.
+    return f"Blocked by guardrail ({', '.join(_names(controls))}): this tool call was not executed."
+
+
+def _withheld_message(controls: Sequence[Any]) -> str:
+    return (
+        f"[Tool output withheld by guardrail ({', '.join(_names(controls))}): it contained "
+        "instructions addressed to the assistant.]"
+    )
+
+
 def _tool_lines(tools: Sequence[ToolDef]) -> list[str]:
     lines = []
     for t in tools:
@@ -114,9 +157,14 @@ async def run_agent(
     tools: Sequence[ToolDef] | None = None,
     params: GenerationParams | None = None,
     max_steps: int = DEFAULT_MAX_STEPS,
+    guard: Guard | None = None,
 ) -> AgentResult:
     if max_steps < 1:
         raise ValueError("max_steps must be >= 1")
+    model_name = getattr(model, "model", "unknown")
+    if guard is not None and not guard.screen_prompt(user_prompt):
+        # Stopped before the model saw anything: no steps, no answer.
+        return AgentResult("", (), STOPPED_BY_GUARD, model_name, decisions=tuple(guard.decisions))
     if tools is None:
         tools = await list_tool_defs(client)
     if system_prompt is None:
@@ -143,18 +191,27 @@ async def run_agent(
 
         messages.append(turn.assistant_message or {"role": "assistant", "content": turn.text})
         executed: list[ExecutedCall] = []
-        for call in turn.tool_calls:
+        for call_index, call in enumerate(turn.tool_calls):
+            blocked = guard.check_call(call, step_index, call_index) if guard else ()
+            if blocked:
+                text = _blocked_message(blocked)
+                executed.append(ExecutedCall(call, text, True, blocked_by=_names(blocked)))
+                messages.append({"role": "tool", "tool_name": call.name, "content": text})
+                continue
             raw_result = await client.call_tool(call.name, call.arguments)
             text, is_error = result_text(raw_result)
             any_tool_error = any_tool_error or is_error
-            executed.append(ExecutedCall(call=call, result_text=text, is_error=is_error))
-            messages.append({"role": "tool", "tool_name": call.name, "content": text})
+            withheld = guard.check_result(call, text, step_index, call_index) if guard else ()
+            seen = _withheld_message(withheld) if withheld else text
+            executed.append(ExecutedCall(call, text, is_error, withheld_by=_names(withheld)))
+            messages.append({"role": "tool", "tool_name": call.name, "content": seen})
         steps.append(AgentStep(step_index, turn.text, turn.latency_ms, tuple(executed)))
 
     return AgentResult(
         final_text=final_text,
         steps=tuple(steps),
         stopped_reason=stopped_reason,
-        model=getattr(model, "model", "unknown"),
+        model=model_name,
         tool_error=any_tool_error,
+        decisions=tuple(guard.decisions) if guard else (),
     )
