@@ -1,0 +1,13 @@
+# Phase 2: every attack scenario (AC01-AC12B, plain + obfuscated) and every benign
+# task against the undefended agent. Expected result: attacks succeed.
+# Each run uses seed + run_index at temperature 0, so every run is reproducible.
+experiment_id: phase2-baseline
+description: Undefended agent against the full Phase 2 attack set and the benign set.
+config: baseline
+attack_set: data/attack_scenarios.json
+runs: 10
+seed: 1337
+temperature: 0.0
+provider: ollama
+model: llama3.1:8b
+benign_set: data/benign_tasks.json

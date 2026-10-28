@@ -90,7 +90,7 @@ Servers · MCP10 Context Injection & Over-Sharing.
 
 ## 6. Threats
 
-Attack case IDs (`AC01`–`AC12`) are Phase 2 work; each also runs in an obfuscated
+Attack case IDs (`AC01`–`AC12B`, built in Phase 2; T12 is split into `AC12A` rug pull and `AC12B` shadow tool) each also run in an obfuscated
 variant (encoding, splitting, other languages; ATLAS AML.T0068 LLM Prompt Obfuscation).
 
 | ID | Threat | Actor | ASI | LLM 2026 | MCP (beta) | ATLAS | Case | Scope |
@@ -106,7 +106,7 @@ variant (encoding, splitting, other languages; ATLAS AML.T0068 LLM Prompt Obfusc
 | T09 | Approval-gate bypass (misleading summary, request splitting) | TA1, TA2 | ASI09 | LLM03:2026 | — | AML.T0053 | AC07 | In |
 | T10 | Excessive agency: unrequested autonomous action | TA4 | ASI02, ASI10 | LLM03:2026 | — | AML.T0053 | AC08 | In |
 | T11 | Poisoned MCP tool description | TA3 | ASI04 | LLM04:2026 | MCP03:2025 | AML.T0115.002, AML.T0011.002 | AC11 | In |
-| T12 | Post-approval rug pull / shadow tool | TA3 | ASI04 | LLM04:2026 | MCP03:2025, MCP04:2025 | AML.T0110, AML.T0115.002 | AC12 | In |
+| T12 | Post-approval rug pull / shadow tool | TA3 | ASI04 | LLM04:2026 | MCP03:2025, MCP04:2025 | AML.T0110, AML.T0115.002 | AC12A, AC12B | In |
 | T13 | Runaway loops and resource exhaustion | TA1, TA4 | ASI08 | LLM06:2026 | — | AML.T0034.002 | — | In (step cap measured, no dedicated case) |
 | T14 | Memory/context poisoning across sessions | TA2 | ASI06 | LLM01:2026 | MCP10:2025 | AML.T0080 | — | Deferred: v1 agent has no persistent memory |
 | T15 | Retrieval poisoning via optional RAG tool | TA2 | ASI06 | LLM09:2026 | — | AML.T0070 | — | Deferred: covered by rag-attack-lab |

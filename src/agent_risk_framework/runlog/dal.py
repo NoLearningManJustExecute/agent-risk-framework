@@ -7,6 +7,7 @@ flakiness is visible instead of silently inflating or deflating a rate.
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from collections.abc import Iterator
@@ -18,6 +19,11 @@ from ..enums import CaseKind, DefenseConfig, DetectorVerdict, GuardrailAction, O
 from .schema import DDL, SCHEMA_VERSION
 
 SQLITE_INT_MAX = 2**63 - 1
+
+# The secondary oracle every benign run is scored with (Phase 2). Kept apart from the
+# run's `outcome` (task success) on purpose: "did the legitimate task get done" and
+# "did the agent act unsafely on benign input" are two measures, never one.
+BENIGN_VIOLATION_ORACLE = "benign_input_violation"
 
 
 @dataclass(frozen=True)
@@ -89,6 +95,8 @@ class ConfigMetrics:
     benign_task_completion_rate: float | None
     blocked_action_rate: float | None
     mean_detection_latency_ms: float | None
+    benign_runs_violation_scored: int  # benign runs with a benign_input_violation verdict
+    benign_input_violation_rate: float | None
 
 
 @dataclass(frozen=True)
@@ -137,6 +145,35 @@ class StepRecord:
                 raise TypeError(f"{name} must be a string or None")
         if self.tool_is_error is not None and not isinstance(self.tool_is_error, bool):
             raise TypeError("tool_is_error must be a bool or None")
+
+
+@dataclass(frozen=True)
+class VerdictRecord:
+    """One deterministic oracle's verdict on one run, with the reasons it gave."""
+
+    run_id: int
+    oracle: str
+    hit: bool
+    reasons: tuple[str, ...] = ()
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    verdict_id: int | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.run_id, bool) or not isinstance(self.run_id, int):
+            raise TypeError("run_id must be an int")
+        if not 0 <= self.run_id <= SQLITE_INT_MAX:
+            raise ValueError(f"run_id out of range: {self.run_id}")
+        if not isinstance(self.oracle, str) or not self.oracle.strip():
+            raise ValueError("oracle must be a non-empty string")
+        if not isinstance(self.hit, bool):
+            raise TypeError("hit must be a bool")
+        if isinstance(self.reasons, str):
+            raise TypeError("reasons must be a sequence of strings, not a string")
+        object.__setattr__(self, "reasons", tuple(self.reasons))
+        if not all(isinstance(r, str) for r in self.reasons):
+            raise TypeError("reasons must be strings")
+        if not isinstance(self.created_at, str):
+            raise TypeError("created_at must be a string")
 
 
 _COLUMNS = (
@@ -250,6 +287,40 @@ class RunLog:
                 data["tool_is_error"] = bool(data["tool_is_error"])
             yield StepRecord(**data)
 
+    def record_verdict(self, verdict: VerdictRecord) -> int:
+        """Insert one oracle verdict and return its verdict_id."""
+        with self._conn:
+            cur = self._conn.execute(
+                "INSERT INTO verdicts (run_id, oracle, hit, reasons, created_at)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    verdict.run_id,
+                    verdict.oracle,
+                    int(verdict.hit),
+                    json.dumps(list(verdict.reasons), ensure_ascii=False),
+                    verdict.created_at,
+                ),
+            )
+        return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def verdicts(self, run_id: int) -> Iterator[VerdictRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM verdicts WHERE run_id = ? ORDER BY verdict_id", (run_id,)
+        )
+        for row in rows:
+            data = dict(row)
+            data["hit"] = bool(data["hit"])
+            data["reasons"] = tuple(json.loads(data["reasons"]))
+            yield VerdictRecord(**data)
+
+    def _verdict_hits(self, experiment_id: str, oracle: str) -> dict[int, bool]:
+        rows = self._conn.execute(
+            "SELECT v.run_id, v.hit FROM verdicts v JOIN runs r ON r.run_id = v.run_id"
+            " WHERE r.experiment_id = ? AND v.oracle = ?",
+            (experiment_id, oracle),
+        )
+        return {int(run_id): bool(hit) for run_id, hit in rows}
+
     def runs(self, experiment_id: str | None = None) -> Iterator[RunRecord]:
         sql = "SELECT * FROM runs"
         params: tuple[str, ...] = ()
@@ -275,12 +346,18 @@ class RunLog:
         - benign_task_completion_rate: benign runs where the user's task got done
         - blocked_action_rate: attack runs where a guardrail blocked an action
         - mean_detection_latency_ms: over runs where a detector was evaluated
+        - benign_input_violation_rate: benign runs where the agent acted unsafely on
+                               legitimate input (the `benign_input_violation` oracle
+                               fired), over benign runs that oracle scored. Separate
+                               from completion: a run can finish the task and still
+                               violate (e.g. send an email it was told not to send).
 
         Runs with outcome `error` are excluded from every rate and counted
         separately per case kind.
         """
         out: dict[str, ConfigMetrics] = {}
         rows = list(self.runs(experiment_id))
+        violations = self._verdict_hits(experiment_id, BENIGN_VIOLATION_ORACLE)
         for config in sorted({r.config for r in rows}):
             cfg_rows = [r for r in rows if r.config == config]
             done = [r for r in cfg_rows if r.outcome != Outcome.ERROR]
@@ -291,6 +368,8 @@ class RunLog:
             latencies = [
                 r.detector_latency_ms for r in evaluated if r.detector_latency_ms is not None
             ]
+            benign_scored = [r for r in benign if r.run_id in violations]
+            benign_violated = sum(violations[r.run_id] for r in benign_scored)  # type: ignore[index]
             benign_intervened = sum(
                 r.detector_result == DetectorVerdict.DETECTED
                 or r.guardrail_action != GuardrailAction.NONE
@@ -321,5 +400,7 @@ class RunLog:
                     _count(attacks, guardrail_action=GuardrailAction.BLOCKED), len(attacks)
                 ),
                 mean_detection_latency_ms=(sum(latencies) / len(latencies)) if latencies else None,
+                benign_runs_violation_scored=len(benign_scored),
+                benign_input_violation_rate=_rate(benign_violated, len(benign_scored)),
             )
         return out

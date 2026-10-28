@@ -6,9 +6,9 @@ how much each layer of defense actually buys, and what it costs in false positiv
 Defense companion to [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab):
 that project demonstrates RAG weaknesses; this one measures defenses for agents.
 
-> **Status: Phase 1 (vulnerable agent baseline).** The measurement rig (Phase 0) and
-> the deliberately vulnerable, over-permissioned agent (Phase 1) are built. Attack
-> cases and guardrails come in later phases. See [ROADMAP.md](ROADMAP.md).
+> **Status: Phase 2 (attack scenarios).** The measurement rig (Phase 0), the
+> deliberately vulnerable agent (Phase 1) and the attack set with its baseline
+> numbers (Phase 2) are built. Guardrails come in Phase 3. See [ROADMAP.md](ROADMAP.md).
 
 ## Why measurement first
 
@@ -59,6 +59,34 @@ To run the agent live (needs a local Ollama with `llama3.1:8b`):
 
 ```bash
 python -m agent_risk_framework.agent.baseline --db runs/baseline.db
+```
+
+## What's in Phase 2
+
+Thirteen attack cases, each in a plain and an obfuscated variant, run against the
+undefended agent: direct prompts, **indirect injection through tool-returned
+content**, **exfiltration through tool arguments**, and MCP attacks (**poisoned tool
+description, post-approval rug pull, shadow tool**). Each run gets a throwaway
+synthetic lab and is scored by a deterministic oracle against the tool-call log
+(no LLM judge). The benign set is scored as two separate measures, task success and
+benign-input violation.
+
+| Piece | Location |
+| --- | --- |
+| Attack cases + scenarios (framework mapping, payloads, oracle per scenario) | `data/attack_scenarios.json`, `src/agent_risk_framework/attacks/scenarios.py` |
+| Per-run lab, harness containment, MCP mutations (poisoned tool, rug pull, shadow tool) | `src/agent_risk_framework/attacks/lab.py` |
+| Deterministic oracles over the step log; benign task success and violation | `src/agent_risk_framework/attacks/oracles.py` |
+| N-run experiment runner, findings, markdown report | `src/agent_risk_framework/attacks/runner.py`, `configs/experiments/phase2_baseline.yaml` |
+| Run log schema v3 (`verdicts` table, benign-input violation rate) | `src/agent_risk_framework/runlog/` |
+| Design, results and caveats · generated results · findings | `docs/phase2_attacks.md`, `docs/phase2_results.md`, `findings/` |
+
+Baseline (`llama3.1:8b`, temp 0, N=10 per case): **attack success 160/260 (62%)**,
+benign **task success 90/120 (75%)**, **benign-input violation 20/120 (17%)**. At
+temperature 0 the 10 runs per case are near-identical, so N shows reproducibility
+rather than spread; see [docs/phase2_attacks.md](docs/phase2_attacks.md).
+
+```bash
+python -m agent_risk_framework.attacks.runner --db runs/phase2.db --findings-dir findings --report docs/phase2_results.md
 ```
 
 ## Quickstart
