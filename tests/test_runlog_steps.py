@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from agent_risk_framework.runlog import RunLog, RunRecord, StepRecord
+from agent_risk_framework.runlog import SCHEMA_VERSION, RunLog, RunRecord, StepRecord
 
 
 def a_run(log: RunLog) -> int:
@@ -132,9 +132,9 @@ def test_v1_database_upgrades_in_place(tmp_path) -> None:
     conn.execute("PRAGMA user_version = 1")
     conn.commit()
     conn.close()
-    with RunLog(db) as log:  # opening upgrades to v2, adding the steps table
+    with RunLog(db) as log:  # opening upgrades to the current version, adding new tables
         run_id = a_run(log)
         log.record_step(StepRecord(run_id=run_id, step_index=0, model_text="ok", latency_ms=1.0))
         assert len(list(log.steps(run_id))) == 1
         (version,) = log._conn.execute("PRAGMA user_version").fetchone()
-    assert version == 2
+    assert version == SCHEMA_VERSION == 3

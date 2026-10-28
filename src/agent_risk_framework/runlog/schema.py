@@ -1,22 +1,27 @@
 """SQLite schema for the run log.
 
-Two grains:
+Three grains:
 
-- `runs`  — one row per attack or benign run (the ablation grain from Phase 0).
-- `steps` — one row per agent step within a run (Phase 1): the model turn plus the
-            tool call it dispatched, with raw arguments and the tool result. A step
-            that produced no tool call (the agent's final answer) has a NULL
-            `tool_name` and records `model_text` only.
+- `runs`     — one row per attack or benign run (the ablation grain from Phase 0).
+- `steps`    — one row per agent step within a run (Phase 1): the model turn plus the
+               tool call it dispatched, with raw arguments and the tool result. A step
+               that produced no tool call (the agent's final answer) has a NULL
+               `tool_name` and records `model_text` only.
+- `verdicts` — one row per deterministic oracle evaluated on a run (Phase 2): the
+               oracle name, whether it fired, and the reasons it gives. A run's
+               `outcome` is derived from its primary oracle; secondary oracles (the
+               benign-input violation check, tool-definition drift) live here only.
 
-Schema v2 adds `steps`; a v1 database upgrades in place because the DDL is
-idempotent (`CREATE TABLE IF NOT EXISTS`) and adds no column to `runs`.
+Schema v2 adds `steps` and v3 adds `verdicts`; older databases upgrade in place
+because the DDL is idempotent (`CREATE TABLE IF NOT EXISTS`) and every addition is
+a new table, never a new column on an existing one.
 """
 
 from __future__ import annotations
 
 from ..enums import CaseKind, DefenseConfig, DetectorVerdict, GuardrailAction, Outcome, values
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _in(enum_cls) -> str:  # type: ignore[no-untyped-def]
@@ -61,4 +66,15 @@ CREATE TABLE IF NOT EXISTS steps (
     UNIQUE (run_id, step_index, call_index)
 );
 CREATE INDEX IF NOT EXISTS idx_steps_run ON steps (run_id, step_index, call_index);
+
+CREATE TABLE IF NOT EXISTS verdicts (
+    verdict_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id     INTEGER NOT NULL REFERENCES runs (run_id),
+    oracle     TEXT    NOT NULL,
+    hit        INTEGER NOT NULL CHECK (hit IN (0, 1)),
+    reasons    TEXT    NOT NULL,
+    created_at TEXT    NOT NULL,
+    UNIQUE (run_id, oracle)
+);
+CREATE INDEX IF NOT EXISTS idx_verdicts_run ON verdicts (run_id);
 """
