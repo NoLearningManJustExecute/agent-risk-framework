@@ -164,6 +164,17 @@ scanned, so a canary in it is still only measured, by the oracles. See
 The hypothesis the ablation tests: architectural controls (`deterministic-only`) reduce
 attack success more, at lower false-positive cost, than content inspection alone.
 
+Phase 4 result, assessed per control (the `deterministic-only` preset was not an
+arm): supported.
+- **Architectural.** Alone, `tool_permissions`, `approval_gate` and `tool_integrity`
+  cut attack success by 46, 37 and 21 points, losing no benign task.
+- **Content inspection.** `input_classifier` cut 21 points and lost 40/450 benign
+  runs. `egress_filter` cut 4 and `output_classifier` 0.
+- **Still needed.** Content inspection is the only control on AC04, a leak to the
+  requester.
+
+See [phase4_ablation.md](phase4_ablation.md).
+
 ## 8. Assumptions
 
 1. The host machine, Python runtime, and Ollama binary are trusted; model weights come from the official Ollama registry.

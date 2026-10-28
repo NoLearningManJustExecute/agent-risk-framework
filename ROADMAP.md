@@ -48,9 +48,19 @@ Deviations from the plan: a rule-based classifier replaces LLM Guard, and the ca
 ### Phase 3.5 — Egress filter — DONE
 The output-filter arm had no baseline target (AC09/AC10 0/20), so a sixth control was added: `egress_filter`, a secret/PII filter on outbound tool arguments (call blocked) and on tool output (secrets redacted before the model reads it). It maps to LLM02:2026 and targets AC03, AC10 and AC12A. It is independent of `tool_permissions` and overlaps it on secret-read cases. A redaction earns credit only through a counterfactual (`output_redacted`: the model carried the placeholder, and putting the secret back makes the objective happen). Offline isolation tests: alone, it blocks all six target scenarios and no benign task. Details in `docs/phase3_5_egress.md`.
 
-### Phase 4 — Defense ablation (the headline) — TODO
-Configs: baseline · deterministic-only · classifier-only · output-filter-only · combined, plus each control alone (`controls:` in the manifest). Report rates from the locked Phase 3 outcome buckets; read `input_withheld` credit against each case's baseline rate.
+### Phase 4 — Defense ablation (the headline) — DONE
+Arms: baseline, each of the six controls alone, and combined. Report rates from the locked Phase 3 outcome buckets, and read `input_withheld` credit against each case's baseline rate.
 Gate: attack success rate, detection rate, FPR, FNR, and benign-task completion rate measured for each config.
+Result:
+- **Setup.** The benign set grew from 13 to 45 tasks (30 hard negatives) before the run. Then: 8 arms × (24 attack scenarios + 45 benign tasks) × N=10, `llama3.1:8b`, temp 0. That is 5,520 runs, 0 errors.
+- **Headline.** **Attack success went from 160/240 (67%) at baseline to 0/240 (0%) combined. The FPR was 75/450 (17%), and task success fell from 410/450 (91%) to 365/450 (81%).**
+- **Per control.** `tool_permissions` bought the most: −46 pp at 2% FPR with no benign task lost. Per control, the architectural controls beat content inspection. `input_classifier` was the only control that lost benign work: exactly its four pinned false positives, 40 runs.
+- **Honest zeros.**
+  - `output_classifier`'s 40 credits are interception on cases that score 0% at baseline (0 pp).
+  - `egress_filter` stopped only AC12A alone (−4 pp), and `combined` pre-empts it entirely.
+  - At temp 0 each case is 10/10 or 0/10, so N=10 shows repeatability, not spread.
+
+The table and chart are generated from the run log. Details in `docs/phase4_ablation.md`.
 
 ### Phase 5 — Portfolio release — TODO
 README · PDF findings report · threat model · architecture diagram · screenshots · demo recording · publish.
@@ -60,3 +70,5 @@ Gate: evidence for every claim · reproducible · public-ready (secret scanning 
 
 ## Headline target
 "Agent guardrail lab: cut attack success from X% to Y% at Z% false-positive cost, with ablation by control layer, mapped to the OWASP Agentic Top 10." A number, not an adjective.
+
+Measured in Phase 4: from 67% to 0% at a 17% false-positive rate. Benign task success fell from 91% to 81% (`llama3.1:8b`, N=10, 24 attack scenarios, 45 benign tasks).

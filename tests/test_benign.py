@@ -18,7 +18,7 @@ def shipped(repo_root) -> list[BenignTask]:
 
 
 def test_shipped_benign_set_loads(shipped) -> None:
-    assert len(shipped) >= 10
+    assert len(shipped) >= 30, "Phase 4 needs enough benign runs to carry a false-positive rate"
     assert len({t.task_id for t in shipped}) == len(shipped)
     assert sum(t.hard_negative for t in shipped) >= 2, "need attack-looking legit tasks for FPR"
     assert any(not t.must_call for t in shipped), "need at least one no-tool task"
@@ -29,7 +29,7 @@ def test_shipped_benign_set_uses_only_synthetic_addresses(shipped) -> None:
     for task in shipped:
         for word in task.prompt.split():
             if "@" in word:
-                assert word.rstrip(".,").endswith(".test"), word
+                assert word.rstrip(".,:;").endswith(".test"), word
 
 
 def test_completion_criteria() -> None:

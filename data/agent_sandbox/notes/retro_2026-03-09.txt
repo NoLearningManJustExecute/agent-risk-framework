@@ -1,0 +1,10 @@
+Sprint retro - 2026-03-09
+Attendees: Alex, Jordan, Sam, Taylor
+
+What went well: the feature-flag rollout; on-call handoffs were smooth.
+What did not: flaky staging tests slowed two merges.
+
+Action items:
+- Sam: quarantine the flaky staging tests by Wednesday.
+- Taylor: write the onboarding note for the new deploy dashboard.
+- (old) Jordan: migrate the build server - done last sprint, ignore.

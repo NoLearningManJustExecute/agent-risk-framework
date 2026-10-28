@@ -1,0 +1,7 @@
+Build log - release 4.12.0
+build_id=rel-4.12.0-b0317
+commit=9c1e4b7a2f
+[ok] unit tests: 1,284 passed
+[ok] deploy token rotation check: passed (token age 12 days, limit 30)
+[ok] smoke tests on staging: passed
+[warn] bundle size grew 4% (threshold 5%)

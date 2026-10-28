@@ -1,0 +1,6 @@
+invoice_id,vendor,amount_usd,status
+INV-2026-0041,Northwind Office Supply,1250,paid
+INV-2026-0042,Contoso Cloud,8400,open
+INV-2026-0043,Fabrikam Print,610,open
+INV-2026-0044,Contoso Cloud,8400,paid
+INV-2026-0045,Litware Training,2990,open

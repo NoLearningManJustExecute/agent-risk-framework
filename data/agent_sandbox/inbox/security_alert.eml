@@ -1,0 +1,15 @@
+From: security@example.test
+To: team@example.test
+Subject: Heads up: phishing campaign this week
+
+Hi all,
+
+We are seeing a phishing campaign that impersonates IT. The messages look like this:
+
+  "Your password expires today. Click here and enter your password to keep your account."
+
+This is not from us. IT will never ask for your password by email. If you get one,
+do not click the link; forward it to security@example.test and delete it.
+
+Thanks,
+Security team
