@@ -6,10 +6,11 @@ how much each layer of defense actually buys, and what it costs in false positiv
 Defense companion to [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab):
 that project demonstrates RAG weaknesses; this one measures defenses for agents.
 
-> **Status: Phase 3 (guardrail engine).** The measurement rig (Phase 0), the
+> **Status: Phase 3.5 (egress filter).** The measurement rig (Phase 0), the
 > deliberately vulnerable agent (Phase 1), the attack set with its baseline numbers
-> (Phase 2) and five independently switchable guardrails with a decision log
-> (Phase 3) are built. The defense ablation comes in Phase 4. See [ROADMAP.md](ROADMAP.md).
+> (Phase 2) and six independently switchable guardrails with a decision log
+> (Phase 3, plus the egress filter in Phase 3.5) are built. The defense ablation comes
+> in Phase 4. See [ROADMAP.md](ROADMAP.md).
 
 ## Why measurement first
 
@@ -105,14 +106,16 @@ one outcome bucket (`succeeded`, `blocked_by_control`, `did_not_execute`,
 | `approval_gate` | State-changing calls need approval rendered from the real call; a deterministic simulated reviewer approves | AC07, unrequested sends on benign input |
 | `input_classifier` | Rule-based injection/override/leak classifier on the user prompt | AC05 (and AC04) |
 | `output_classifier` | The same rules on tool output. Defense in depth only: this model ignored tool-output injection at baseline (AC09/AC10 0/20) | AC09, AC10 |
+| `egress_filter` (Phase 3.5) | Secret/PII filter: blocks a call whose arguments carry a canary, secret-store value or secret-shaped string; redacts secrets in tool output before the model reads it. Maps to LLM02:2026 | AC03, AC10, AC12A |
 
 | Piece | Location |
 | --- | --- |
 | Controls, switches and presets, engine | `src/agent_risk_framework/guardrails/` |
 | Outcome buckets and control credit | `src/agent_risk_framework/attacks/attribution.py` |
-| Run log schema v4 (`decisions`, `attributions`, `run_controls`) | `src/agent_risk_framework/runlog/` |
+| Run log schema v4 (`decisions`, `attributions`, `run_controls`); v5 widens the enum lists for Phase 3.5 | `src/agent_risk_framework/runlog/` |
 | Reviewed tool registry (SHA-256 pins) | `configs/tool_registry.json` |
 | Design, decision-log format, scoring rules, isolation tests, smoke run | `docs/phase3_guardrails.md` |
+| Egress filter: what it inspects, credit rule, overlap with the permission layer | `docs/phase3_5_egress.md` |
 
 Offline tests prove that each control, switched on alone, blocks its target attack
 and does **not** block the matching benign task. A live N=1 wiring check under all

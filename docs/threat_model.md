@@ -145,16 +145,21 @@ switch, so a single control can be measured alone.
 | --- | --- | --- |
 | `baseline` | None (over-permissioned agent). Expected result: attacks succeed | Control group |
 | `deterministic-only` | `tool_permissions` (recipient allowlist, path sandbox, secret store denied); `tool_integrity` (vet, pin at approval, quarantine drift/unapproved/shadow tools); `approval_gate` (side effects approved from the real call); step cap (always on) | ASI02, ASI03, ASI04, ASI08, ASI09; MCP02:2025, MCP03:2025, MCP04:2025 |
+| (each control alone) | any single control; labelled `single-control` in `runs.config`, exact set in `run_controls` | the Phase 4 per-control arms |
 | `classifier-only` | `input_classifier`: rule-based injection/override/leak classifier on the user prompt | ASI01 (direct), LLM01:2026, LLM08:2026 (leak requests) |
-| `output-filter-only` | `output_classifier`: the same rules on tool output before the model reads it | ASI01 (indirect), MCP06:2025 |
-| `combined` | All five | All in-scope threats |
+| `output-filter-only` | `output_classifier`: the same rules on tool output before the model reads it; `egress_filter` (Phase 3.5): secrets and PII in outbound tool arguments (call blocked) and in tool output (redacted) | ASI01 (indirect), MCP06:2025; ASI02, ASI03, LLM02:2026 (egress) |
+| `combined` | All six | All in-scope threats |
 
 Changed from the Phase 0 plan, after the Phase 2 results: the classifier on tool
-output is its own switch (it is the `output-filter-only` config), and the planned
-canary/secret output filter was not built. Its targets are covered elsewhere: the
-secret store is outside the path sandbox (AC03, AC10, AC12A reads), and requests
-for the hidden context are an `input_classifier` rule (AC04). The leak itself (a
-canary in the final answer) is still only measured, by the oracles.
+output is its own switch. The canary/secret output filter was first left out
+(Phase 3) and then built in Phase 3.5 as `egress_filter`, a separate switch, because
+the injection scan on tool output had no baseline target (AC09/AC10 0/20) and the
+output-filter arm needed one. Its targets are T05, T07 and T12 (AC03, AC10, AC12A):
+the secret leaving in a tool argument. It overlaps `tool_permissions`, which denies
+the secret-store read itself; Phase 4 reports that credit as entangled. Requests for
+the hidden context stay an `input_classifier` rule (AC04): the final answer is not
+scanned, so a canary in it is still only measured, by the oracles. See
+[phase3_5_egress.md](phase3_5_egress.md).
 
 The hypothesis the ablation tests: architectural controls (`deterministic-only`) reduce
 attack success more, at lower false-positive cost, than content inspection alone.

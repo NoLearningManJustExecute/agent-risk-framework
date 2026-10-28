@@ -1,4 +1,4 @@
-"""Which guardrails are on: five independent switches plus the Phase 4 presets.
+"""Which guardrails are on: six independent switches plus the Phase 4 presets.
 
 Every control can be switched on alone, so Phase 4 can measure each one in
 isolation as well as in the named ablation configs:
@@ -8,12 +8,15 @@ isolation as well as in the named ablation configs:
 | `baseline`           | none (the Phase 1/2 undefended agent) |
 | `deterministic-only` | tool_permissions, tool_integrity, approval_gate |
 | `classifier-only`    | input_classifier |
-| `output-filter-only` | output_classifier |
-| `combined`           | all five |
+| `output-filter-only` | output_classifier, egress_filter |
+| `combined`           | all six |
+| `single-control`     | a label, not a preset: exactly one control, named in `run_controls` |
 
 The classifiers are rule-based and deterministic too; "deterministic-only" means
 the architectural controls (what a tool may do, which tools exist, who approves a
 side effect), as opposed to the content-inspection controls (what the text says).
+"Output filter" means both scans on the tool boundary: injected instructions coming
+back (`output_classifier`) and secrets going out (`egress_filter`).
 """
 
 from __future__ import annotations
@@ -29,7 +32,7 @@ PRESETS: dict[DefenseConfig, frozenset[Control]] = {
         {Control.TOOL_PERMISSIONS, Control.TOOL_INTEGRITY, Control.APPROVAL_GATE}
     ),
     DefenseConfig.CLASSIFIER_ONLY: frozenset({Control.INPUT_CLASSIFIER}),
-    DefenseConfig.OUTPUT_FILTER_ONLY: frozenset({Control.OUTPUT_CLASSIFIER}),
+    DefenseConfig.OUTPUT_FILTER_ONLY: frozenset({Control.OUTPUT_CLASSIFIER, Control.EGRESS_FILTER}),
     DefenseConfig.COMBINED: frozenset(Control),
 }
 
@@ -63,7 +66,24 @@ class GuardrailConfig:
 
     @classmethod
     def preset(cls, config: DefenseConfig | str) -> GuardrailConfig:
-        return cls(PRESETS[DefenseConfig(config)])
+        config = DefenseConfig(config)
+        if config not in PRESETS:
+            raise ValueError(f"{config.value!r} is a label, not a preset; name the controls")
+        return cls(PRESETS[config])
+
+    @classmethod
+    def preset_or_none(cls, config: DefenseConfig | str) -> GuardrailConfig:
+        """The preset's controls, or no controls for a label that is not a preset."""
+        return cls(PRESETS.get(DefenseConfig(config), frozenset()))
+
+    def label(self) -> DefenseConfig:
+        """The preset this control set is exactly, else `single-control` for one control."""
+        for config, controls in PRESETS.items():
+            if controls == self.controls:
+                return config
+        if len(self.controls) == 1:
+            return DefenseConfig.SINGLE_CONTROL
+        raise ValueError(f"no label for the control set {self.names()}")
 
     def enabled(self, control: Control) -> bool:
         return control in self.controls

@@ -57,6 +57,7 @@ from ..enums import (
 )
 from ..findings import Evidence, Finding, write_finding
 from ..guardrails import DEFAULT_REGISTRY, GuardrailConfig, GuardrailEngine, ToolRegistry
+from ..guardrails.egress import EgressFilter
 from ..manifest import load_manifest
 from ..providers.base import GenerationParams
 from ..runlog import (
@@ -67,7 +68,13 @@ from ..runlog import (
     StepRecord,
     VerdictRecord,
 )
-from .attribution import BENIGN_STAGES, CHANNEL_STAGES, Attribution, attribute
+from .attribution import (
+    BENIGN_STAGES,
+    CHANNEL_STAGES,
+    PAYLOAD_CONTROLS,
+    Attribution,
+    attribute,
+)
 from .lab import (
     OracleContext,
     apply_post_approval,
@@ -325,6 +332,13 @@ def _records(result: AgentResult) -> list[DecisionRecord]:
     return [d.record(0) for d in result.decisions]
 
 
+def _unredact(base_sandbox: Path | str):  # type: ignore[no-untyped-def]
+    # The same filter the run used: the lab copies the base sandbox's secret store, so
+    # its known secrets (and therefore its placeholders) are reproducible from the log.
+    egress = EgressFilter.for_workspace(base_sandbox)
+    return lambda text: egress.redact(text).replacements
+
+
 def attribute_attack(
     scenario: AttackScenario,
     trace: Trace,
@@ -347,11 +361,16 @@ def attribute_attack(
         tool_names=tools,
         payload_stages=CHANNEL_STAGES[scenario.channel],
         simulate=simulate,
+        unredact=_unredact(base_sandbox),
+        withheld_controls=PAYLOAD_CONTROLS,
     )
 
 
 def attribute_benign(
-    task: BenignTask, trace: Trace, decisions: Sequence[DecisionRecord]
+    task: BenignTask,
+    trace: Trace,
+    decisions: Sequence[DecisionRecord],
+    base_sandbox: Path | str = DEFAULT_SANDBOX,
 ) -> Attribution:
     return attribute(
         objective=lambda t: score_task_success(task, t).hit,
@@ -359,6 +378,7 @@ def attribute_benign(
         decisions=decisions,
         tool_names=BASE_TOOLS,
         payload_stages=BENIGN_STAGES,
+        unredact=_unredact(base_sandbox),
     )
 
 
@@ -489,7 +509,7 @@ async def run_benign_once(
         success = score_task_success(task, trace)
         verdicts = [success, score_benign_violation(task, trace, ctx)]
         outcome = Outcome.SUCCEEDED if success.hit else Outcome.FAILED
-        attribution = attribute_benign(task, trace, decisions)
+        attribution = attribute_benign(task, trace, decisions, base_sandbox)
     run_id = _record(
         run_log,
         experiment_id=experiment_id,
@@ -638,7 +658,7 @@ def _rescored(
             task = task_by_id[run.case_id]
             out[run.run_id] = (
                 (score_task_success(task, trace), score_benign_violation(task, trace, ctx)),
-                attribute_benign(task, trace, decisions),
+                attribute_benign(task, trace, decisions, base_sandbox),
             )
     return out
 
@@ -854,12 +874,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     manifest = load_manifest(args.manifest)
+    config = manifest.config
     if args.controls is not None:
         guardrails = GuardrailConfig.parse(args.controls.split(","))
     elif manifest.controls is not None:
         guardrails = GuardrailConfig.parse(manifest.controls)
     else:
         guardrails = GuardrailConfig.preset(manifest.config)
+    if guardrails.controls != GuardrailConfig.preset_or_none(config).controls:
+        # An override changes what ran, so the label follows it (run_controls is exact).
+        with contextlib.suppress(ValueError):
+            config = guardrails.label()
     catalog = load_catalog(manifest.attack_set)
     scenarios = catalog.select([x for x in args.only.split(",") if x.strip()] or None)
     tasks = [] if args.skip_benign else load_benign_tasks(manifest.benign_set)
@@ -886,7 +911,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 temperature=manifest.temperature,
                 max_steps=args.max_steps,
                 progress=progress,
-                config=manifest.config,
+                config=config,
                 guardrails=guardrails,
                 registry=args.registry,
             )

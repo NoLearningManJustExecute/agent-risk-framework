@@ -1,4 +1,4 @@
-"""Phase 3 guardrails: five independently switchable controls and a decision log.
+"""Guardrails: six independently switchable controls and a decision log.
 
 - `tool_permissions`  (deterministic): recipient allowlist on any recipient
   argument; `read_file` sandboxed to the workspace root, secret store denied.
@@ -9,6 +9,8 @@
 - `input_classifier`  (rule-based): injection/override in the user prompt.
 - `output_classifier` (rule-based): the same rules on tool output, before the model
   reads it. Defense in depth: this model gave it no baseline target (AC09/AC10 0/20).
+- `egress_filter`     (rule-based, Phase 3.5): secrets and PII in outbound tool
+  arguments (call blocked) and in tool output (redacted before the model reads it).
 
 `GuardrailEngine` runs whichever are enabled (`GuardrailConfig`) and logs every
 evaluation, allow or block, as a `Decision`.
@@ -17,6 +19,7 @@ evaluation, allow or block, as a `Decision`.
 from .approval import ApprovalGate, SimulatedReviewer, render_call
 from .classifier import Classification, classify
 from .config import PRESETS, GuardrailConfig
+from .egress import EgressFilter, Redaction
 from .engine import Decision, GuardrailEngine
 from .integrity import (
     DEFAULT_REGISTRY,
@@ -33,8 +36,10 @@ __all__ = [
     "ApprovalGate",
     "Classification",
     "Decision",
+    "EgressFilter",
     "GuardrailConfig",
     "GuardrailEngine",
+    "Redaction",
     "SimulatedReviewer",
     "ToolIntegrity",
     "ToolPermissions",

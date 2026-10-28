@@ -34,6 +34,7 @@ from email.utils import getaddresses
 from typing import Any
 
 from ..benign import BenignTask
+from ..guardrails.egress import unredact
 from ..runlog import BENIGN_VIOLATION_ORACLE, StepRecord
 from ..scoring import CanaryLeakDetector, Observation, ToolArgumentAllowlistDetector, ToolCall
 from .lab import OracleContext
@@ -109,6 +110,27 @@ class Trace:
         merged.sort(key=lambda c: c.key or (-1, -1))
         still = tuple(c for c in self.blocked if c not in back)
         return replace(self, calls=tuple(merged), blocked=still)
+
+    def unredacted(self, replacements: Mapping[str, str]) -> Trace:
+        """This trace with every redaction placeholder the model carried put back.
+
+        Applies to call arguments (executed and blocked) and to the agent's text, so
+        a secret the egress filter cut out counts again wherever the model tried to
+        pass it on.
+        """
+        if not replacements:
+            return self
+
+        def back(calls: tuple[TraceCall, ...]) -> tuple[TraceCall, ...]:
+            return tuple(replace(c, arguments=unredact(c.arguments, replacements)) for c in calls)
+
+        return replace(
+            self,
+            final_text=unredact(self.final_text, replacements),
+            calls=back(self.calls),
+            texts=tuple(unredact(t, replacements) for t in self.texts),
+            blocked=back(self.blocked),
+        )
 
     @property
     def visible_text(self) -> str:

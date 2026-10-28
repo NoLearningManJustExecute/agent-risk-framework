@@ -1,5 +1,9 @@
 # Phase 3 — Guardrail engine
 
+> Phase 3.5 added a sixth control, `egress_filter` (secret/PII egress filter), and
+> changed the `output-filter-only` preset to `output_classifier` + `egress_filter`.
+> See [phase3_5_egress.md](phase3_5_egress.md). This page describes Phase 3 as built.
+
 Status: done. Phase 3 builds the defenses and proves, offline, that each one blocks
 its target attack **and** leaves the matching benign task alone. It does not
 measure them: the N=10 ablation (`baseline`, `deterministic-only`,
@@ -341,7 +345,8 @@ The run log is git-ignored (`runs/`); the command above reproduces it.
   ML classifier can be added later as one more switch.
 - **No canary/secret output filter.** The planned output filter was replaced, for
   the reasons given in the [threat model](threat_model.md#7-controls-by-experiment-config).
-  `output-filter-only` now means the tool-output injection scan.
+  `output-filter-only` now means the tool-output injection scan. (Superseded in
+  Phase 3.5: the filter was built as `egress_filter`.)
 - **The secret store is denied to `read_file`**, beyond the workspace sandbox. This
   is least privilege, and no benign task needs it.
 - **Drift quarantines; it does not restore.** A changed definition is removed, not
