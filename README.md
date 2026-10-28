@@ -6,11 +6,12 @@ how much each layer of defense actually buys, and what it costs in false positiv
 Defense companion to [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab):
 that project demonstrates RAG weaknesses; this one measures defenses for agents.
 
-> **Status: Phase 3.5 (egress filter).** The measurement rig (Phase 0), the
+> **Status: Phase 4 (defense ablation).** The measurement rig (Phase 0), the
 > deliberately vulnerable agent (Phase 1), the attack set with its baseline numbers
-> (Phase 2) and six independently switchable guardrails with a decision log
-> (Phase 3, plus the egress filter in Phase 3.5) are built. The defense ablation comes
-> in Phase 4. See [ROADMAP.md](ROADMAP.md).
+> (Phase 2), six independently switchable guardrails with a decision log (Phase 3 and
+> 3.5) and the ablation that measures them (Phase 4) are built. Headline: **attack
+> success 67% → 0% with all six controls, at a 17% false-positive rate; benign task
+> success 91% → 81%**. See [ROADMAP.md](ROADMAP.md).
 
 ## Why measurement first
 
@@ -125,6 +126,51 @@ attack set: it is benign task BT-013, scored by `benign_input_violation`.
 
 ```bash
 python -m agent_risk_framework.attacks.runner --manifest configs/experiments/phase3_combined_smoke.yaml --db runs/phase3-smoke.db
+```
+
+## What's in Phase 4
+
+The defense ablation:
+- **Arms.** Eight: `baseline`, each of the six controls alone, and `combined`.
+- **Cases.** The 24 attack scenarios, plus a benign set grown first to 45 tasks, 30 of
+  them adversarial-looking but legitimate.
+- **Runs.** N=10 per case per arm on `llama3.1:8b` at temperature 0: 5,520 runs,
+  0 errors.
+
+The chart and the full table in
+[docs/phase4_ablation.md](docs/phase4_ablation.md) are generated from the run log;
+the summary below is copied from that table.
+
+![Attack success, false-positive rate and task success per arm](docs/phase4_ablation.svg)
+
+| Arm | Attack success | False-positive rate | Benign task success |
+| --- | --- | --- | --- |
+| `baseline` | 160/240 (67%) | 0/450 (0%) | 410/450 (91%) |
+| `tool_permissions` | 50/240 (21%) | 10/450 (2%) | 410/450 (91%) |
+| `tool_integrity` | 110/240 (46%) | 0/450 (0%) | 410/450 (91%) |
+| `approval_gate` | 70/240 (29%) | 39/450 (9%) | 409/450 (91%) |
+| `input_classifier` | 110/240 (46%) | 40/450 (9%) | 370/450 (82%) |
+| `output_classifier` | 160/240 (67%) | 0/450 (0%) | 410/450 (91%) |
+| `egress_filter` | 150/240 (62%) | 0/450 (0%) | 410/450 (91%) |
+| `combined` | 0/240 (0%) | 75/450 (17%) | 365/450 (81%) |
+
+What the numbers say:
+- **Most value.** `tool_permissions` buys the most, at the lowest cost.
+- **Only benign losses.** `input_classifier` is the only control that loses
+  legitimate work: its four pinned false positives.
+- **No demonstrated effect.**
+  - `output_classifier`'s credit is interception on cases this model never fell for.
+  - `egress_filter` stops one case alone, and `combined` pre-empts it.
+- **N measures repeatability.** At temperature 0 each case repeats identically, so
+  N=10 shows repeatability, not spread.
+
+The full table also has detection, FNR, violations, latency, buckets, credit by
+basis, per-scenario and per-task detail. It is in
+[docs/phase4_ablation.md](docs/phase4_ablation.md), with the findings.
+
+```bash
+python -m agent_risk_framework.attacks.ablation --manifest configs/experiments/phase4_ablation.yaml --db runs/phase4.db
+python -m agent_risk_framework.attacks.ablation_report --db runs/phase4.db
 ```
 
 ## Quickstart

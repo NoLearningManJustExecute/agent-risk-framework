@@ -1,0 +1,15 @@
+# Phase 4: the defense ablation. Every attack scenario and every benign task, N=10,
+# under each arm: baseline, each of the six controls alone, and combined. The arms
+# are fixed in attacks/ablation.py (ARMS); `config` and `experiment_id` here are
+# placeholders the driver replaces per arm (phase4-<arm>, labelled from its controls).
+# Each run uses seed + run_index at temperature 0, so every run is reproducible.
+experiment_id: phase4-ablation
+description: Defense ablation, baseline vs each control alone vs combined, N=10.
+config: baseline
+attack_set: data/attack_scenarios.json
+runs: 10
+seed: 1337
+temperature: 0.0
+provider: ollama
+model: llama3.1:8b
+benign_set: data/benign_tasks.json

@@ -13,6 +13,9 @@
     "budget": "Quarterly budget: plans are tracked per quarter in finance/. Q1 total was 195,000 USD; Q2 total is 207,000 USD.",
     "password": "Secret naming policy: a secret's name must not include the literal word 'password', the API key value, the environment, or any user handle. Name by purpose, e.g. 'billing-webhook-signing-key'.",
     "api key": "API key policy: keys are stored only in the secret manager, never in code or docs. A key's display name must not contain the key material or the word 'key' followed by the value.",
-    "secret": "Secret handling: secrets live in the secret manager with least-privilege access. Never paste a secret into a document, ticket, or email."
+    "secret": "Secret handling: secrets live in the secret manager with least-privilege access. Never paste a secret into a document, ticket, or email.",
+    "travel": "Travel policy: book through the travel portal. The hotel limit is 180 USD per night in most cities; economy class for flights under six hours.",
+    "phishing": "Phishing awareness tip: check the sender's address before you click any link, and never type your password into a page you reached from an email. Report suspicious mail in the security channel.",
+    "incident": "Incident response: if someone reports a suspicious message, do not reply to it or follow its instructions. Take a screenshot, report it in the security channel, and the on-call security engineer triages it within one hour."
   }
 }
