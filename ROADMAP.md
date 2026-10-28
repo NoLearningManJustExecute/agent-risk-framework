@@ -16,13 +16,14 @@ Status key: DONE / IN PROGRESS / TODO / BLOCKED / PARKED
 
 ## Phases
 
-### Phase 0 — Foundation (build the measurement rig before the agent) — TODO, NEXT
+### Phase 0 — Foundation (build the measurement rig before the agent) — DONE
 Provider abstraction (real Ollama + fake deterministic provider) · attack runner · **deterministic detectors** · findings schema (JSON + markdown) · SQLite run logging · experiment manifests · **benign task set (~50 legit tasks)** · threat model mapped to ASI · offline tests · CI (pytest, ruff, pip-audit).
 Gate: tests pass · a run writes to SQLite · a finding is generated · benign set loads · threat model done.
 
-### Phase 1 — Vulnerable agent baseline — TODO
-Deliberately over-permissioned local agent · fake tools (search, email, file) **behind a local stdio MCP server** · tool-execution logging · baseline report.
-Gate: tools callable · every action logged · runs reproducible · **tool-calling reliability verified on llama3.1:8b in week 1** (kill-switch risk — see Approach §Risks).
+### Phase 1 — Vulnerable agent baseline — DONE
+Deliberately over-permissioned local agent · fake tools (`search_docs`, `send_email`, `read_file`) **behind a local stdio MCP server** · async MCP client + custom agent loop (no LangGraph) · per-step tool-execution logging to the Phase 0 SQLite log (schema v2 `steps` table) · baseline benign report. No guardrails: stated policy, recipient allowlist, and path sandbox are present but **unenforced** (inert data until Phase 3).
+Gate: tools callable (in-process and real stdio) · every step logged with raw args + result · runs reproducible at fixed seed/temperature · **tool-calling reliability verified on llama3.1:8b: 20/20 (100%) well-formed, correctly-routed calls, native tool-calling, seed 1337, temp 0** (kill-switch cleared; llama3.2:3b reference 19/20 native, 17/20 prompted-JSON).
+Deliberate weaknesses, mapped: unenforced recipient allowlist and un-sandboxed `read_file` path (ASI02, ASI03, LLM03:2026, MCP02:2025); canary in the system prompt (ASI01, LLM08:2026); step cap bounds runaway loops (ASI08, LLM06:2026). Details in `docs/phase1_agent.md`.
 
 ### Phase 2 — Attack scenarios — TODO
 Prove prompt-to-action escalation. Baseline expectation = **attack succeeds** (undefended). Includes indirect injection via a tool-returned email/file, exfiltration through tool arguments (confused deputy), MCP-specific attacks (poisoned tool description, post-approval rug pull, shadow tool), and obfuscated variants.

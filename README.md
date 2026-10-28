@@ -6,8 +6,9 @@ how much each layer of defense actually buys, and what it costs in false positiv
 Defense companion to [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab):
 that project demonstrates RAG weaknesses; this one measures defenses for agents.
 
-> **Status: Phase 0 (measurement rig).** The agent, attack cases, and guardrails come
-> in later phases. See [ROADMAP.md](ROADMAP.md).
+> **Status: Phase 1 (vulnerable agent baseline).** The measurement rig (Phase 0) and
+> the deliberately vulnerable, over-permissioned agent (Phase 1) are built. Attack
+> cases and guardrails come in later phases. See [ROADMAP.md](ROADMAP.md).
 
 ## Why measurement first
 
@@ -28,6 +29,37 @@ reproducibly, before there is an agent to measure.
 | Experiment manifest format (YAML or JSON) | `src/agent_risk_framework/manifest.py`, `configs/experiments/` |
 | Benign task set with deterministic success criteria (stub, 12 of ~50) | `data/benign_tasks.json` |
 | Threat model mapped to OWASP Agentic Top 10 (ASI01–ASI10) | `docs/threat_model.md` |
+
+## What's in Phase 1
+
+The deliberately vulnerable, over-permissioned agent that later phases attack and
+defend. No guardrails yet — the stated policy, recipient allowlist, and path
+sandbox are present but **unenforced** (they become controls in Phase 3), so at
+baseline the agent does whatever it is asked.
+
+| Piece | Location |
+| --- | --- |
+| Three fake, side-effect-simulating tools (`search_docs`, `send_email`, `read_file`) behind a local **stdio MCP server** | `src/agent_risk_framework/agent/tools.py`, `agent/server.py` |
+| Async MCP client helpers + custom agent loop (no LangGraph), with a hard step cap | `src/agent_risk_framework/agent/client.py`, `agent/loop.py` |
+| Native tool-calling model (Ollama) and a scriptable fake for offline tests | `src/agent_risk_framework/agent/model.py` |
+| Stated policy + hidden canary + inert allowlist/sandbox data | `src/agent_risk_framework/agent/policy.py` |
+| Per-step logging to the SQLite run log (schema v2 `steps` table: tool name, raw args, result, model text, latency) | `src/agent_risk_framework/runlog/` |
+| Baseline benign runner and the usefulness anchor it produces | `src/agent_risk_framework/agent/baseline.py` |
+| Synthetic workspace (file sandbox with a canary file) and doc index | `data/agent_sandbox/`, `data/doc_index.json` |
+| Phase 1 design, deliberate weaknesses, and framework mapping | `docs/phase1_agent.md` |
+
+Tool-calling reliability was verified before building the loop (the kill-switch
+risk in [APPROACH](ROADMAP.md)): `llama3.1:8b` emitted a well-formed,
+correctly-routed tool call on **20 of 20** trivial tasks (100%) with native
+tool-calling at seed 1337, temperature 0. At baseline the undefended agent
+completes **9 of 12** benign tasks (75%) — the usefulness anchor the Phase 4
+ablation measures each defense's cost against. See [docs/phase1_agent.md](docs/phase1_agent.md).
+
+To run the agent live (needs a local Ollama with `llama3.1:8b`):
+
+```bash
+python -m agent_risk_framework.agent.baseline --db runs/baseline.db
+```
 
 ## Quickstart
 

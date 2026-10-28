@@ -1,10 +1,22 @@
-"""SQLite schema for the run log: one row per attack or benign run."""
+"""SQLite schema for the run log.
+
+Two grains:
+
+- `runs`  — one row per attack or benign run (the ablation grain from Phase 0).
+- `steps` — one row per agent step within a run (Phase 1): the model turn plus the
+            tool call it dispatched, with raw arguments and the tool result. A step
+            that produced no tool call (the agent's final answer) has a NULL
+            `tool_name` and records `model_text` only.
+
+Schema v2 adds `steps`; a v1 database upgrades in place because the DDL is
+idempotent (`CREATE TABLE IF NOT EXISTS`) and adds no column to `runs`.
+"""
 
 from __future__ import annotations
 
 from ..enums import CaseKind, DefenseConfig, DetectorVerdict, GuardrailAction, Outcome, values
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _in(enum_cls) -> str:  # type: ignore[no-untyped-def]
@@ -33,4 +45,20 @@ CREATE TABLE IF NOT EXISTS runs (
     UNIQUE (experiment_id, case_kind, case_id, config, run_index)
 );
 CREATE INDEX IF NOT EXISTS idx_runs_experiment_config ON runs (experiment_id, config);
+
+CREATE TABLE IF NOT EXISTS steps (
+    step_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id        INTEGER NOT NULL REFERENCES runs (run_id),
+    step_index    INTEGER NOT NULL CHECK (step_index >= 0),
+    call_index    INTEGER NOT NULL CHECK (call_index >= 0),
+    tool_name     TEXT,
+    tool_args     TEXT,
+    tool_result   TEXT,
+    tool_is_error INTEGER CHECK (tool_is_error IN (0, 1)),
+    model_text    TEXT    NOT NULL,
+    latency_ms    REAL    NOT NULL CHECK (latency_ms >= 0),
+    created_at    TEXT    NOT NULL,
+    UNIQUE (run_id, step_index, call_index)
+);
+CREATE INDEX IF NOT EXISTS idx_steps_run ON steps (run_id, step_index, call_index);
 """

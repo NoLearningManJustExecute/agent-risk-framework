@@ -91,6 +91,54 @@ class ConfigMetrics:
     mean_detection_latency_ms: float | None
 
 
+@dataclass(frozen=True)
+class StepRecord:
+    """One agent step: the model turn plus the tool call it dispatched, if any.
+
+    A step with no tool call (the agent's final answer, or a turn that emitted no
+    well-formed call) leaves `tool_name` None and records `model_text` only. When a
+    single model turn emits several tool calls, each is its own row sharing
+    `step_index` and distinguished by `call_index`.
+
+    `tool_args` is the raw arguments exactly as the model produced them (JSON text),
+    so the log preserves what was sent even when it was malformed; `tool_result` is
+    the tool's returned text, possibly an error message.
+    """
+
+    run_id: int
+    step_index: int
+    model_text: str
+    latency_ms: float
+    call_index: int = 0
+    tool_name: str | None = None
+    tool_args: str | None = None
+    tool_result: str | None = None
+    tool_is_error: bool | None = None
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    step_id: int | None = None
+
+    def __post_init__(self) -> None:
+        for name in ("run_id", "step_index", "call_index"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an int")
+            if not 0 <= value <= SQLITE_INT_MAX:
+                raise ValueError(f"{name} out of range: {value}")
+        if isinstance(self.latency_ms, bool) or not isinstance(self.latency_ms, int | float):
+            raise TypeError("latency_ms must be a number")
+        if not math.isfinite(self.latency_ms) or self.latency_ms < 0:
+            raise ValueError("latency_ms must be finite and >= 0")
+        for name in ("model_text", "created_at"):
+            if not isinstance(getattr(self, name), str):
+                raise TypeError(f"{name} must be a string")
+        for name in ("tool_name", "tool_args", "tool_result"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
+                raise TypeError(f"{name} must be a string or None")
+        if self.tool_is_error is not None and not isinstance(self.tool_is_error, bool):
+            raise TypeError("tool_is_error must be a bool or None")
+
+
 _COLUMNS = (
     "experiment_id",
     "case_id",
@@ -105,6 +153,19 @@ _COLUMNS = (
     "guardrail_action",
     "latency_ms",
     "detector_latency_ms",
+    "created_at",
+)
+
+_STEP_COLUMNS = (
+    "run_id",
+    "step_index",
+    "call_index",
+    "tool_name",
+    "tool_args",
+    "tool_result",
+    "tool_is_error",
+    "model_text",
+    "latency_ms",
     "created_at",
 )
 
@@ -133,9 +194,13 @@ class RunLog:
 
     def _init_schema(self) -> None:
         (version,) = self._conn.execute("PRAGMA user_version").fetchone()
-        if version not in (0, SCHEMA_VERSION):
+        # A newer database may have columns or tables this code does not know about;
+        # refuse it. An older one (v1) upgrades in place: the DDL is idempotent and
+        # every v2 addition is a new table, so no data migration is needed.
+        if version > SCHEMA_VERSION:
             raise RuntimeError(f"run log schema v{version} unsupported (expected {SCHEMA_VERSION})")
         with self._conn:
+            self._conn.execute("PRAGMA foreign_keys = ON")
             self._conn.executescript(DDL)
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
@@ -159,6 +224,31 @@ class RunLog:
                 params,
             )
         return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def record_step(self, step: StepRecord) -> int:
+        """Insert one agent step and return its step_id."""
+        placeholders = ", ".join("?" for _ in _STEP_COLUMNS)
+        row = asdict(step)
+        params = [
+            int(row[c]) if c == "tool_is_error" and row[c] is not None else row[c]
+            for c in _STEP_COLUMNS
+        ]
+        with self._conn:
+            cur = self._conn.execute(
+                f"INSERT INTO steps ({', '.join(_STEP_COLUMNS)}) VALUES ({placeholders})",  # noqa: S608 - column names are constants
+                params,
+            )
+        return int(cur.lastrowid)  # type: ignore[arg-type]
+
+    def steps(self, run_id: int) -> Iterator[StepRecord]:
+        rows = self._conn.execute(
+            "SELECT * FROM steps WHERE run_id = ? ORDER BY step_index, call_index", (run_id,)
+        )
+        for row in rows:
+            data = dict(row)
+            if data["tool_is_error"] is not None:
+                data["tool_is_error"] = bool(data["tool_is_error"])
+            yield StepRecord(**data)
 
     def runs(self, experiment_id: str | None = None) -> Iterator[RunRecord]:
         sql = "SELECT * FROM runs"

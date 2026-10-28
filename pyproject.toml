@@ -13,6 +13,10 @@ authors = [{ name = "RJ" }]
 requires-python = ">=3.12"
 dependencies = [
     "PyYAML>=6.0.2",
+    # The agent's tools run behind a real MCP server (stdio); the loop drives an
+    # async MCP client. anyio ships with mcp and is imported directly by the loop.
+    "mcp>=2.3,<3",
+    "anyio>=4.15,<5",
 ]
 
 [project.optional-dependencies]
