@@ -387,3 +387,19 @@ def test_named_group_must_be_parent_or_sibling() -> None:
 
     with pytest.raises(ScenarioError, match="only a seeded variant"):
         parse_catalog(data)
+
+
+def test_named_group_cannot_chain_or_name_itself() -> None:
+    base = _seeded()["scenarios"][0]
+    s01 = {**base, "scenario_id": "AC01-S01", "variant_group": "AC01"}
+    s02 = {
+        **base,
+        "scenario_id": "AC01-S02",
+        "transform": "paraphrase:casual",
+        "variant_group": "AC01-S01",
+    }
+    with pytest.raises(ScenarioError, match="names a group itself"):
+        parse_seeded({"scenarios": [s01, s02]}, load_catalog())
+    self_named = {**base, "variant_group": "AC01-S01"}
+    with pytest.raises(ScenarioError, match="not its parent or a sibling"):
+        parse_seeded({"scenarios": [self_named]}, load_catalog())

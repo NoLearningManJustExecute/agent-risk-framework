@@ -416,14 +416,20 @@ def parse_seeded(data: Any, base: ScenarioCatalog) -> tuple[AttackScenario, ...]
                 raise ScenarioError(f"{s.scenario_id}: an MCP variant rewrites the tool only")
         known.add(s.scenario_id)
         out.append(s)
-    # A named group is the parent's, or another variant of the same parent.
-    siblings = {s.scenario_id: s.derived_from for s in out}
+    # A named group is the parent's, or another variant of the same parent that is itself a
+    # group root (names no group), so a chain cannot split one cluster into two groups.
+    by_id = {s.scenario_id: s for s in out}
     for s in out:
         g = s.group
-        if g is not None and g != s.derived_from and siblings.get(g) != s.derived_from:
+        if g is None or g == s.derived_from:
+            continue
+        sibling = by_id.get(g)
+        if sibling is None or sibling.derived_from != s.derived_from or g == s.scenario_id:
             raise ScenarioError(
                 f"{s.scenario_id}: variant_group {g} is not its parent or a sibling"
             )
+        if sibling.group is not None:
+            raise ScenarioError(f"{s.scenario_id}: variant_group {g} names a group itself")
     return tuple(out)
 
 
