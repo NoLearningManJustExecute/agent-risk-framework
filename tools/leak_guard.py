@@ -224,9 +224,11 @@ class GenericRule:
 
 # Several patterns are assembled from pieces so that this file never matches its own rules.
 GENERIC_RULES: tuple[GenericRule, ...] = (
+    # A drive letter never ends a word, so a letter of any script before it means a word
+    # ending in a colon (translated text, then an escaped newline), not a path.
     GenericRule(
         "windows-path",
-        re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/][^\s\"'`<>|*?]*"),
+        re.compile(r"(?<![^\W\d_])[A-Za-z]:[\\/][^\s\"'`<>|*?]*"),
         windows_path_exempt,
     ),
     GenericRule("unc-path", re.compile(r"(?<![\\\w])\\\\[A-Za-z0-9][\w.$-]*\\[\w.$-]+")),

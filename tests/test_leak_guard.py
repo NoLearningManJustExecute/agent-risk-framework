@@ -128,6 +128,19 @@ def test_generic_rule_catches(text: str, rule: str) -> None:
     assert rule in rules_hit(text)
 
 
+def test_drive_letter_after_a_non_ascii_letter_is_not_a_path() -> None:
+    # Translated model output, JSON-escaped: a word ending in "o:" right after a non-ASCII
+    # letter, then an escaped newline. Built from pieces so no source line matches a rule.
+    translated = "N" + chr(0xE3) + "o" + ":" + BACKSLASH + "n1. Envie o plano."
+    assert "windows-path" not in rules_hit(translated)
+    assert "windows-path" not in rules_hit("Pr" + chr(0xE9) + "c" + ":" + BACKSLASH + "nx")
+    # A real drive path is still caught, after a space or after a non-ASCII letter and a space.
+    genuine = "C" + ":" + BACKSLASH + "Users" + BACKSLASH + "x"
+    assert "windows-path" in rules_hit("copie para " + genuine)
+    assert "windows-path" in rules_hit(chr(0xE9) + " " + genuine)
+    assert "windows-path" in rules_hit("(" + genuine + ")")
+
+
 @pytest.mark.parametrize(
     "text",
     [

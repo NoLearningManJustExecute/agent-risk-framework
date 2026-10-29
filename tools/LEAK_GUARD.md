@@ -31,7 +31,8 @@ removes metadata chunks from PNG files in place, keeping image, color and animat
 These patterns contain nothing personal and live in the guard itself.
 
 - **Absolute paths.** Windows drive paths (a drive letter, a colon, then a slash or backslash,
-  not preceded by a letter, so web addresses do not match), UNC paths (plain and escaped), macOS
+  not preceded by a letter of any script, so web addresses and translated words ending in a
+  colon do not match), UNC paths (plain and escaped), macOS
   home directories, Git Bash and WSL user folders, Linux home directories (the CI runner's home
   directory is accepted only inside `.github/`, never with `..`), the Windows user profile
   variable, and a tilde followed by a folder.
