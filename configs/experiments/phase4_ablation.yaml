@@ -3,6 +3,8 @@
 # are fixed in attacks/ablation.py (ARMS); `config` and `experiment_id` here are
 # placeholders the driver replaces per arm (phase4-<arm>, labelled from its controls).
 # Each run uses seed + run_index at temperature 0, so every run is reproducible.
+# benign_set is the frozen 45-task set the published Phase 4 numbers were measured on;
+# data/benign_tasks.json has grown since (BT-046 to BT-062, detection-corpus hard negatives).
 experiment_id: phase4-ablation
 description: Defense ablation, baseline vs each control alone vs combined, N=10.
 config: baseline
@@ -12,4 +14,4 @@ seed: 1337
 temperature: 0.0
 provider: ollama
 model: llama3.1:8b
-benign_set: data/benign_tasks.json
+benign_set: data/benign_tasks_phase4.json
