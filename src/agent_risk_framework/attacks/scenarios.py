@@ -230,6 +230,7 @@ class AttackScenario:
     notes: str = ""
     derived_from: str | None = None  # seeded variants: the plain scenario they came from
     transform: str | None = None  # seeded variants: paraphrase:<style> or translation:<lang>
+    group: str | None = None  # seeded variants: the group a near-duplicate joins (else own id)
 
     @property
     def case_id(self) -> str:
@@ -251,8 +252,11 @@ class AttackScenario:
 
         An obfuscated variant is the same attack as its plain scenario under an encoding,
         so it joins the plain scenario's group. A seeded variant is a distinct wording and
-        is its own group.
+        is its own group, unless it is a near-duplicate of its parent or of another variant
+        (`seeding.NEAR_COPY`), in which case the seeded catalog names the group it joins.
         """
+        if self.group is not None:
+            return self.group
         return self.case_id if self.obfuscated else self.scenario_id
 
     @classmethod
@@ -262,7 +266,8 @@ class AttackScenario:
         sid = data.get("scenario_id")
         if not isinstance(sid, str) or not SCENARIO_ID_RE.fullmatch(sid):
             raise ScenarioError(f"invalid scenario_id {sid!r}")
-        allowed = set(cls.__dataclass_fields__)
+        # The JSON key for `group` is "variant_group".
+        allowed = (set(cls.__dataclass_fields__) - {"group"}) | {"variant_group"}
         unknown = set(data) - allowed
         if unknown:
             raise ScenarioError(f"{sid}: unknown fields {sorted(unknown)}")
@@ -289,6 +294,9 @@ class AttackScenario:
         if not isinstance(notes, str):
             raise ScenarioError(f"{sid}: notes must be a string")
         derived_from, transform = data.get("derived_from"), data.get("transform")
+        group = data.get("variant_group")
+        if group is not None and ("-S" not in sid or not isinstance(group, str)):
+            raise ScenarioError(f"{sid}: only a seeded variant names its variant_group")
         if "-S" in sid:
             if derived_from != SCENARIO_ID_RE.fullmatch(sid).group(1):  # type: ignore[union-attr]
                 raise ScenarioError(f"{sid}: a seeded variant derives from its plain scenario")
@@ -313,6 +321,7 @@ class AttackScenario:
             notes=notes,
             derived_from=derived_from,
             transform=transform,
+            group=group,
         )
 
 
@@ -407,6 +416,20 @@ def parse_seeded(data: Any, base: ScenarioCatalog) -> tuple[AttackScenario, ...]
                 raise ScenarioError(f"{s.scenario_id}: an MCP variant rewrites the tool only")
         known.add(s.scenario_id)
         out.append(s)
+    # A named group is the parent's, or another variant of the same parent that is itself a
+    # group root (names no group), so a chain cannot split one cluster into two groups.
+    by_id = {s.scenario_id: s for s in out}
+    for s in out:
+        g = s.group
+        if g is None or g == s.derived_from:
+            continue
+        sibling = by_id.get(g)
+        if sibling is None or sibling.derived_from != s.derived_from or g == s.scenario_id:
+            raise ScenarioError(
+                f"{s.scenario_id}: variant_group {g} is not its parent or a sibling"
+            )
+        if sibling.group is not None:
+            raise ScenarioError(f"{s.scenario_id}: variant_group {g} names a group itself")
     return tuple(out)
 
 

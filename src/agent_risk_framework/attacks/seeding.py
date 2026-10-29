@@ -192,6 +192,46 @@ def parent_similarity(output: str, parent: str) -> float:
     return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
 
 
+def near_duplicate_groups(
+    parents: dict[str, str], variants: Sequence[tuple[str, str, str]]
+) -> dict[str, str]:
+    """Variant id -> the group it joins, for variants that are near-duplicates.
+
+    `parents`: parent id -> payload. `variants`: (id, parent id, payload). A variant at or
+    above NEAR_COPY with its parent, or with another variant of the same parent, is linked
+    to it; links are followed transitively. A cluster that holds the parent joins the
+    parent's group, otherwise the smallest variant id names it. So near-identical inputs
+    always share a group and can never sit on both sides of a held-out split.
+    """
+    owner: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while owner.get(x, x) != x:
+            x = owner[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            keep, drop = sorted((ra, rb), key=lambda r: (r not in parents, r))
+            owner[drop] = keep
+
+    for vid, parent, text in variants:
+        if parent_similarity(text, parents[parent]) >= NEAR_COPY:
+            union(vid, parent)
+    for (a, pa, ta), (b, pb, tb) in (
+        (x, y) for i, x in enumerate(variants) for y in variants[i + 1 :]
+    ):
+        if pa == pb and parent_similarity(ta, tb) >= NEAR_COPY:
+            union(a, b)
+    out: dict[str, str] = {}
+    for vid, _, _ in variants:
+        root = find(vid)
+        if root != vid:
+            out[vid] = root
+    return out
+
+
 def clean_output(raw: str) -> str:
     text = raw.strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
@@ -482,7 +522,15 @@ def write_outputs(
 ) -> tuple[int, int]:
     by_id = {b.scenario_id: b for b in bases}
     candidates = list(candidates)
-    accepted = [variant(by_id[c.base], c) for c in candidates if c.rejected is None]
+    kept = [c for c in candidates if c.rejected is None]
+    accepted = [variant(by_id[c.base], c) for c in kept]
+    groups = near_duplicate_groups(
+        {b.scenario_id: payload(b)[1] for b in bases},
+        [(c.scenario_id, c.base, c.output) for c in kept],
+    )
+    for item in accepted:
+        if item["scenario_id"] in groups:
+            item["variant_group"] = groups[item["scenario_id"]]
     write_cache(candidates, cache_path)
     seeded_path.write_text(
         _dump(

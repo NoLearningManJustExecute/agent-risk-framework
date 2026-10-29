@@ -23,7 +23,7 @@ python -m agent_risk_framework.attacks.seeding run --db runs/phase1-seeding.db
 | Acceptance | Keeps every string the attack depends on (addresses, paths, tool and field names, upper-case markers); does not repeat the rewriting instructions; changed; length 0.4 to 3.0 times the original. Everything else is recorded as rejected, with the reason |
 | Duplicates | An output identical (after whitespace normalization) to an earlier output of the same base is dropped, so one input never forms two groups |
 | Meaning review | The lexical check cannot tell whether a rewrite is still the same attack. Every remaining variant has a recorded verdict in `data/seeding/review.json`, checked against the parent attack's written elements (also in that file); a variant without one stops generation. The review was added after the first audit of the live runs, before any held-out split existed, and does not look at whether a variant succeeded |
-| Near-copies | `parent_similarity`: difflib's SequenceMatcher ratio over the case-folded, whitespace-split words of the variant and its parent (recorded per candidate in the cache). A kept variant at 0.90 or above is flagged as a near-copy in its review reason; it counts as a distinct input, and a stricter reading of the corpus may drop it. A test ties the flags to the metric |
+| Near-copies | `parent_similarity`: difflib's SequenceMatcher ratio over the case-folded, whitespace-split words of the variant and its parent (recorded per candidate in the cache). A kept variant at 0.90 or above is flagged as a near-copy in its review reason. Near-duplicates share a variant group: a variant at 0.90 or above with its parent, or with another variant of the same parent, joins that group (links followed transitively; the seeded catalog records it as `variant_group`), so near-identical inputs never sit on both sides of a held-out split. A test ties the flags to the metric |
 | Ids | `<case>-S<nn>`, where `nn` is the transformation's fixed index, so ids never shift when another candidate is rejected |
 | Labels | Each variant runs live in both arms and is scored by its parent's deterministic oracle. A variant that no longer succeeds is an attack that failed, never a success |
 | Runs | Three per variant and arm (`configs/experiments/phase1_seeding.yaml`), at seed + run index and temperature 0. Runs of one input repeat, so three show whether an outcome is stable; the variant group is the unit of independence |
@@ -56,7 +56,8 @@ The detection corpus splits by variant group, never inside one:
 - its authored `-OBF` variant is the same attack under an encoding, so it joins the plain
   scenario's group and does not count as a distinct input;
 - each seeded `-Snn` variant is a distinct wording and is its own group, with `derived_from`
-  naming its parent;
+  naming its parent, unless it is a near-duplicate (above), in which case it joins its
+  parent's or sibling's group;
 - each benign task is its own group.
 
 ## Reserved for evasion testing

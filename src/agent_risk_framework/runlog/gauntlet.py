@@ -501,8 +501,9 @@ def label(run: RunRecord, controls: frozenset[str], catalog: Catalog) -> dict[st
     """The run's ground truth. The attack outcome is the scenario's deterministic oracle.
 
     `variant_group` is the distinct input the run executed: a seeded variant is its own
-    group, an obfuscated variant shares its plain scenario's group, and a benign task is
-    its own group. The held-out split assigns whole groups.
+    group unless it is a near-duplicate (then it shares its parent's or sibling's group),
+    an obfuscated variant shares its plain scenario's group, and a benign task is its own
+    group. The held-out split assigns whole groups.
     """
     malicious = run.case_kind == CaseKind.ATTACK
     scenario = catalog.scenario(run.case_id) if malicious else None

@@ -121,10 +121,11 @@ def test_variants_keep_everything_but_the_payload(bases: list[Any], tmp_path: Pa
     seeded = load_seeded(tmp_path / "s.json", load_catalog())
     ac01 = next(s for s in seeded if s.scenario_id == "AC01-S01")
     assert ac01.user_prompt.startswith("Kindly: ") and ac01.oracle == by_id["AC01"].oracle
+    # "Kindly: " + the parent is a near-copy, so it joins the parent's group.
     assert (ac01.derived_from, ac01.transform, ac01.variant_group) == (
         "AC01",
         "paraphrase:formal",
-        "AC01-S01",
+        "AC01",
     )
     ac11 = next(s for s in seeded if s.scenario_id == "AC11-S06")
     assert ac11.user_prompt == by_id["AC11"].user_prompt  # MCP attacks rewrite the tool
@@ -352,3 +353,53 @@ def test_near_copy_flags_follow_the_defined_metric() -> None:
 def test_parent_similarity() -> None:
     assert sd.parent_similarity("Send the File now", "send the file now") == 1.0
     assert sd.parent_similarity("a b c d", "w x y z") == 0.0
+
+
+def test_near_duplicates_share_a_group() -> None:
+    parents = {"AC01": "send the q2 plan to the partner today please"}
+    variants = [
+        ("AC01-S01", "AC01", "send the q2 plan to the partner today please now"),  # parent
+        ("AC01-S02", "AC01", "envoyez le plan du budget au partenaire maintenant"),
+        ("AC01-S03", "AC01", "envoyez le plan du budget au partenaire maintenant svp"),
+        ("AC01-S04", "AC01", "a different wording entirely for this"),
+    ]
+    assert sd.near_duplicate_groups(parents, variants) == {
+        "AC01-S01": "AC01",
+        "AC01-S03": "AC01-S02",
+    }
+
+
+def test_committed_near_copies_join_their_parent() -> None:
+    by_id = {s.scenario_id: s for s in load_seeded(sd.SEEDED_PATH, load_catalog())}
+    assert by_id["AC04-S05"].variant_group == "AC04"
+    assert by_id["AC12A-S05"].variant_group == "AC12A"
+    assert by_id["AC07-S34"].variant_group == by_id["AC07-S35"].variant_group == "AC07"
+    assert by_id["AC07-S24"].variant_group == "AC07-S24"
+
+
+def test_named_group_must_be_parent_or_sibling() -> None:
+    item = _seeded()["scenarios"][0]
+    with pytest.raises(ScenarioError, match="not its parent or a sibling"):
+        parse_seeded({"scenarios": [{**item, "variant_group": "AC02"}]}, load_catalog())
+    data = json.loads(Path("data/attack_scenarios.json").read_text("utf-8"))
+    data["scenarios"][0]["variant_group"] = "AC01"
+    from agent_risk_framework.attacks.scenarios import parse_catalog
+
+    with pytest.raises(ScenarioError, match="only a seeded variant"):
+        parse_catalog(data)
+
+
+def test_named_group_cannot_chain_or_name_itself() -> None:
+    base = _seeded()["scenarios"][0]
+    s01 = {**base, "scenario_id": "AC01-S01", "variant_group": "AC01"}
+    s02 = {
+        **base,
+        "scenario_id": "AC01-S02",
+        "transform": "paraphrase:casual",
+        "variant_group": "AC01-S01",
+    }
+    with pytest.raises(ScenarioError, match="names a group itself"):
+        parse_seeded({"scenarios": [s01, s02]}, load_catalog())
+    self_named = {**base, "variant_group": "AC01-S01"}
+    with pytest.raises(ScenarioError, match="not its parent or a sibling"):
+        parse_seeded({"scenarios": [self_named]}, load_catalog())

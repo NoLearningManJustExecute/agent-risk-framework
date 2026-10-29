@@ -80,7 +80,7 @@ records that, and content references can point at text the model never read.
 | `scenario_id` / `task_id` | the case id |
 | `condition` | the arm: `baseline`, `combined`, or the single control switched on |
 | `source_run_id` | `<experiment>:<kind>:<case>:<run_index>` |
-| `variant_group` | the distinct input: the plain scenario for `ACnn` and `ACnn-OBF`, the variant itself for a seeded `ACnn-Snn`, the task id for a benign task (see docs/corpus_seeding.md) |
+| `variant_group` | the distinct input: the plain scenario for `ACnn` and `ACnn-OBF`, the variant itself for a seeded `ACnn-Snn` (or the group of its parent or a sibling when it is a near-duplicate), the task id for a benign task (see docs/corpus_seeding.md) |
 | `derived_from` | the parent scenario of a seeded variant, otherwise `null` |
 
 ## Provenance
