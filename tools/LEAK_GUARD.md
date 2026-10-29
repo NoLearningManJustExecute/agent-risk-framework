@@ -15,16 +15,16 @@ git config core.hooksPath .githooks
 | Flag | Scans |
 | --- | --- |
 | `--tree` | Every tracked file and every untracked file that is not ignored, including file names. |
-| `--history` | Every commit reachable from any ref: author and committer names and emails, the full message and every added line. Every annotated tag: name, tagger and message. Every reachable blob the text diff does not show (binary, UTF-16, or hidden by a diff attribute), and every image blob. |
+| `--history` | Every commit reachable from any ref: author and committer names and emails, the full message, every path it touches and every added line. Every annotated tag: name, tagger and message. Every branch name. Every reachable blob the text diff does not show (binary, UTF-16, or hidden by a diff attribute), and every image blob. |
 | `--range A..B` | The same commit checks as `--history`, limited to the commits in `A..B`. This is the blocking CI gate. |
 | `--text FILE` | One file. Use it for a pull request body before posting it, and for generated outputs. |
-| `--pr` | In CI: the current pull request's title, body, reviews, review comments and comments, read with the GitHub REST API. |
+| `--pr` | In CI: the current pull request's title, body, branch name, reviews, review comments and comments, read with the GitHub REST API. |
 | `--all` | `--tree` and `--history`. |
 
 Exit codes: `0` clean, `1` at least one hit, `2` a setup or usage problem.
 
 Tools: `--emit-baseline CUTOFF` prints baseline candidates (see below) and `--strip-png FILE...`
-removes metadata chunks from PNG files in place, keeping only image and color chunks.
+removes metadata chunks from PNG files in place, keeping image, color and animation chunks.
 
 ## Generic rules
 
@@ -50,10 +50,16 @@ These patterns contain nothing personal and live in the guard itself.
   only when the token body mixes character classes (AWS key ids: any), has at least 3 bits of
   entropy per character, and holds no placeholder word such as example, sample, dummy or fake.
   A key split across string literals is still matched.
-- **Image metadata:** EXIF, XMP, C2PA content credentials, and PNG text chunks. The readable text
-  inside an image (decompressed PNG text chunks, printable runs outside pixel data) is scanned
-  with every rule. Every image is also listed for manual review. `--strip-png` keeps image, color
-  profile and animation chunks and drops everything else.
+- **Image metadata:** EXIF, XMP, C2PA content credentials, and PNG text chunks. Images are
+  recognized by name or by their first bytes. The readable text inside an image is scanned with
+  every rule: decompressed PNG text chunks and other non-pixel chunks, JPEG APP and comment
+  segments, PDF dictionaries, XMP packets and UTF-16 strings, and long printable runs in other
+  formats. Every image is also listed for manual review. Only a PNG's metadata hit can be
+  baselined, and only when its text has no finding. `--strip-png` keeps image, color profile and
+  animation chunks and drops everything else.
+- **Other binaries:** the XML parts of Office and OpenDocument files and printable ASCII and
+  UTF-16 runs of at least 10 characters are scanned with every rule. These hits cannot be
+  baselined.
 
 A hit prints the location and rule. Locally it also shows the match with its middle masked; in CI
 (`CI=true`) it shows the rule and location only. A file whose own name holds a match or a private
@@ -127,9 +133,13 @@ cutoff <40 hex commit>
   safety net and can be skipped.
 - The blocking `leak-guard` CI job scans only what a change adds: `--range base..head` and `--pr`
   on pull requests, `--range before..after` on pushes to main.
+- That job runs the guard from the base commit, so a change cannot weaken the guard that checks
+  it. It uses the change's own copy only when the base has no guard with range support (the
+  first install, or the upgrade that adds it), and says which copy it ran.
 - The `Leak guard full scan` workflow runs `--all` against the baseline every week and on demand.
   It does not block merges.
 - The `PR text guard` workflow runs `--pr` again whenever a comment or review is posted or edited,
   always with the default branch's copy of the guard.
 - Pull requests from forks get no secrets, so the CI guard fails closed (exit 2) on them.
-- Pushes to main never cancel each other's runs, so every pushed range is scanned.
+- Every push to main runs in its own concurrency group, so no pushed range is cancelled or
+  skipped while queued. Pull request runs replace each other.

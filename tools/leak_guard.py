@@ -35,6 +35,7 @@ from __future__ import annotations
 import argparse
 import bisect
 import hashlib
+import io
 import json
 import math
 import os
@@ -44,6 +45,7 @@ import struct
 import subprocess
 import sys
 import urllib.request
+import zipfile
 import zlib
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -54,7 +56,34 @@ from typing import Any
 ALLOW_FILE = ".leakguard-allow"
 BASELINE_FILE = ".leakguard-baseline"
 DEFAULT_DENYLIST = Path("..") / "_planning" / "private-denylist.hashes"
-IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".pdf"})
+IMAGE_SUFFIXES = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".svg",
+        ".pdf",
+        ".tif",
+        ".tiff",
+        ".heic",
+        ".heif",
+        ".avif",
+        ".bmp",
+        ".ico",
+    }
+)
+IMAGE_MAGIC = (
+    b"\x89PNG",
+    b"\xff\xd8\xff",
+    b"GIF8",
+    b"%PDF",
+    b"II*\x00",
+    b"MM\x00*",
+    b"BM",
+    b"\x00\x00\x01\x00",
+)
 METADATA_MARKERS = (b"Exif", b"eXIf", b"EXIF", b"xmpmeta", b"XML:com.adobe.xmp", b"c2pa")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 PNG_METADATA_CHUNKS = frozenset({b"eXIf", b"tEXt", b"iTXt", b"zTXt", b"caBX"})
@@ -223,8 +252,8 @@ GENERIC_RULES: tuple[GenericRule, ...] = (
         "private-key",
         re.compile(
             "-{5}BEGIN "
-            + r"(?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-{5}(?:[\s\"'+,]|\\[nr])+"
-            + r"(?:[A-Za-z-]+: [^\n]*(?:[\s\"'+,]|\\[nr])+)*(?P<body>[A-Za-z0-9+/]{40,})"
+            + r"(?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-{5}(?:[\s\"'+,]|\\+[nr])+"
+            + r"(?:[A-Za-z-]+: [^\n]*(?:[\s\"'+,]|\\+[nr])+)*(?P<body>[A-Za-z0-9+/]{40,})"
         ),
         secret_exempt,
     ),
@@ -577,7 +606,8 @@ class Scanner:
         self.scan_text(image_text(data), f"{label} (embedded text)")
         if not image_metadata(data):
             return
-        if len(self.hits) > before:
+        # Only PNG text is fully parsed, so only a PNG metadata hit can ever be baselined.
+        if len(self.hits) > before or not data.startswith(PNG_SIGNATURE):
             fingerprint = None
         if fingerprint and self.baseline and self.baseline.covers(fingerprint):
             self.baselined += 1
@@ -589,14 +619,17 @@ class Scanner:
     ) -> None:
         """Scan one file's bytes. ``path`` decides image handling and path-scoped exceptions."""
         shown = self.safe_label(path) if label is None else label
-        image = Path(path).suffix.lower() in IMAGE_SUFFIXES
+        image = Path(path).suffix.lower() in IMAGE_SUFFIXES or data.startswith(IMAGE_MAGIC)
         if image:
             fingerprint = (commit, "image-metadata", 0, path) if commit else None
             self.scan_image(data, shown, fingerprint)
         text = decode_text(data)
         if text is None:
             if not image:
-                self.notices.append(f"{shown}: binary, not scanned")
+                # Readable text inside other binaries is scanned too; its hits are never
+                # baselinable, because they carry no line in a diff.
+                self.notices.append(f"{shown}: binary, scanned for embedded text")
+                self.scan_text(binary_text(data), f"{shown} (embedded text)")
             return
         self.scan_text(text, shown, origin=path, commit=commit, path_key=path)
 
@@ -634,16 +667,73 @@ def image_text(data: bytes) -> str:
                 pieces += [keyword, language, translated, _inflate(text) if compressed else text]
             else:
                 pieces.append(body)
+    elif data.startswith(b"\xff\xd8"):
+        pieces += jpeg_metadata_segments(data)
     elif data.startswith(b"%PDF"):
         # Stream bodies are mostly compressed; keep the dictionaries and any XMP packets.
-        pieces.append(re.sub(rb"stream\r?\n.*?endstream", b"", data, flags=re.DOTALL))
+        dictionaries = re.sub(rb"stream\r?\n.*?endstream", b"", data, flags=re.DOTALL)
+        pieces.append(dictionaries)
         pieces += re.findall(rb"<x:xmpmeta.*?</x:xmpmeta>", data, flags=re.DOTALL)
+        pieces += pdf_utf16_strings(dictionaries)
     else:
-        pieces.append(data)
-    # Longer runs outside PNG text, so compressed bytes do not produce chance matches.
-    shortest = 4 if data.startswith(PNG_SIGNATURE) else 8
-    runs = re.findall(rb"[\x20-\x7e]{%d,}" % shortest, b"\n".join(pieces))
+        # Unparsed formats: long runs only, so compressed bytes do not produce chance matches.
+        return binary_text(data)
+    joined = b"\n".join(pieces)
+    runs = re.findall(rb"[\x20-\x7e]{4,}", joined) + utf16_runs(joined, 4)
     return "\n".join(run.decode("ascii") for run in runs)
+
+
+def utf16_runs(data: bytes, shortest: int) -> list[bytes]:
+    """Printable UTF-16 little endian runs, as ASCII bytes."""
+    pattern = rb"(?:[\x20-\x7e]\x00){%d,}" % shortest
+    return [run[::2] for run in re.findall(pattern, data)]
+
+
+def binary_text(data: bytes) -> str:
+    """Readable text inside a binary file: XML parts of Office and OpenDocument archives, and
+    printable ASCII and UTF-16 runs of at least 10 characters."""
+    pieces: list[str] = []
+    if data.startswith(b"PK\x03\x04"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                for info in archive.infolist():
+                    if info.filename.endswith((".xml", ".rels")) and info.file_size < 1 << 22:
+                        pieces.append(archive.read(info).decode("utf-8", errors="replace"))
+        except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
+            pass
+    runs = re.findall(rb"[\x20-\x7e]{10,}", data) + utf16_runs(data, 10)
+    pieces += [run.decode("ascii") for run in runs]
+    return "\n".join(pieces)
+
+
+def jpeg_metadata_segments(data: bytes) -> list[bytes]:
+    """APP and comment segment payloads of a JPEG file (EXIF, XMP, IPTC, C2PA), not pixels."""
+    segments: list[bytes] = []
+    offset = 2
+    while offset + 4 <= len(data) and data[offset] == 0xFF:
+        marker = data[offset + 1]
+        if marker == 0xDA:
+            break
+        (length,) = struct.unpack(">H", data[offset + 2 : offset + 4])
+        if 0xE0 <= marker <= 0xEF or marker == 0xFE:
+            segments.append(data[offset + 4 : offset + 2 + length])
+        offset += 2 + length
+    return segments
+
+
+def pdf_utf16_strings(dictionaries: bytes) -> list[bytes]:
+    """PDF text strings written in UTF-16 (hex or literal form), decoded to ASCII where possible."""
+    found: list[bytes] = []
+    for hex_text in re.findall(rb"<FEFF([0-9A-Fa-f\s]+)>", dictionaries):
+        try:
+            raw = bytes.fromhex(hex_text.decode("ascii"))
+        except ValueError:
+            continue
+        found.append(raw.decode("utf-16-be", errors="replace").encode("ascii", "replace"))
+    for literal in re.findall(rb"\(\xfe\xff((?:[^()\\]|\\.)*)\)", dictionaries, flags=re.DOTALL):
+        text = literal.decode("utf-16-be", errors="replace")
+        found.append(text.encode("ascii", "replace"))
+    return found
 
 
 def _inflate(data: bytes) -> bytes:
@@ -760,21 +850,24 @@ def parse_patch(patch: str) -> tuple[list[FilePatch], set[str]]:
     blob: str | None = None
     in_hunk = False
     number = 0
-    for line in patch.splitlines():
-        if line.startswith("diff --git "):
+    # Split on newlines only: a carriage return, form feed or other separator inside an added
+    # line is content, and must not hide what follows it.
+    for line in patch.split("\n"):
+        header = line.rstrip("\r")
+        if header.startswith("diff --git "):
             current, blob, in_hunk = None, None, False
-        elif not in_hunk and line.startswith("index "):
-            found = re.match(r"index [0-9a-f]+\.\.([0-9a-f]+)", line)
+        elif not in_hunk and header.startswith("index "):
+            found = re.match(r"index [0-9a-f]+\.\.([0-9a-f]+)", header)
             blob = found.group(1) if found else None
-        elif not in_hunk and line.startswith("+++ "):
-            if line[4:].strip() != "/dev/null":
-                current = FilePatch(_patch_path(line), blob)
+        elif not in_hunk and header.startswith("+++ "):
+            if header[4:].strip() != "/dev/null":
+                current = FilePatch(_patch_path(header), blob)
                 files.append(current)
                 if blob is not None:
                     shown_as_text.add(blob)
-        elif line.startswith("@@"):
+        elif header.startswith("@@"):
             in_hunk = True
-            found = re.search(r"\+(\d+)", line)
+            found = re.search(r"\+(\d+)", header)
             number = int(found.group(1)) if found else 0
         elif in_hunk and current is not None and line.startswith("+"):
             current.lines.append(line[1:])
@@ -798,6 +891,7 @@ PATCH_OPTIONS = (
     "--no-renames",
     "--diff-merges=first-parent",
 )
+NAME_OPTIONS = ("--format=", "--name-only", "-z", "--no-renames", "--diff-merges=first-parent")
 
 
 def commit_metadata(root: Path, revisions: Sequence[str]) -> list[list[str]]:
@@ -826,12 +920,15 @@ def scan_commits(scanner: Scanner, root: Path, revisions: Sequence[str]) -> None
         for name, value in zip(HISTORY_FIELDS, people, strict=True):
             scanner.scan_text(value, f"{commit} {name}", commit=sha, path_key=f":{name}")
         scanner.scan_text(message, f"{commit} message", commit=sha, path_key=":message")
+        # Every path the commit touches, including empty files and reused blobs with no diff.
+        names = run_git(root, "show", *NAME_OPTIONS, sha).split(b"\0")
+        for name in sorted({os.fsdecode(raw) for raw in names if raw.strip()}):
+            scanner.scan_path(name, f"{commit} {scanner.safe_label(name)}", sha)
         patch = run_git(root, "show", *PATCH_OPTIONS, sha).decode("utf-8", errors="replace")
         file_patches, text_blobs = parse_patch(patch)
         shown_as_text |= text_blobs
         for file_patch in file_patches:
             label = f"{commit} {scanner.safe_label(file_patch.path)}"
-            scanner.scan_path(file_patch.path, label, sha)
             if file_patch.lines:
                 scanner.scan_text(
                     "\n".join(file_patch.lines),
@@ -847,6 +944,15 @@ def scan_commits(scanner: Scanner, root: Path, revisions: Sequence[str]) -> None
 def scan_history(scanner: Scanner, root: Path) -> None:
     scan_commits(scanner, root, ["--all"])
     scan_tags(scanner, root)
+    scan_refs(scanner, root)
+
+
+def scan_refs(scanner: Scanner, root: Path) -> None:
+    """Branch names, local and remote. Never baselined."""
+    output = run_git(root, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes")
+    for name in output.decode("utf-8", errors="replace").split("\n"):
+        if name.strip():
+            scanner.scan_text(name, f"ref {scanner.safe_label(name)} name")
 
 
 TAG_FORMAT = "%00%(refname:short)%00%(taggername)%00%(taggeremail)%00%(contents)"
@@ -917,6 +1023,7 @@ def scan_blobs(
         for sha, name in objects.items()
         if sha not in shown_as_text or Path(name).suffix.lower() in IMAGE_SUFFIXES
     )
+    # Images are recognized by name or by content, as in the tree scan.
     for sha, kind, content in read_objects(root, wanted):
         if kind != "blob":
             continue
@@ -927,7 +1034,6 @@ def scan_blobs(
             fingerprint = (commit, "image-metadata", 0, name) if commit else None
             scanner.scan_image(content, label, fingerprint)
         else:
-            scanner.scan_path(name, label, commit)
             scanner.scan_file_bytes(content, name, label, commit)
 
 
@@ -975,7 +1081,12 @@ def pull_request_texts(env: Mapping[str, str]) -> list[tuple[str, str]]:
         raise GuardSetupError("--pr runs only on pull request events")
     base = f"{env.get('GITHUB_API_URL', 'https://api.github.com')}/repos/{repository}"
     pr = http_get_json(f"{base}/pulls/{number}", token)
-    texts = [("pr title", str(pr.get("title") or "")), ("pr body", str(pr.get("body") or ""))]
+    branch = (pr.get("head") or {}).get("ref") or ""
+    texts = [
+        ("pr title", str(pr.get("title") or "")),
+        ("pr body", str(pr.get("body") or "")),
+        ("pr branch", str(branch)),
+    ]
     sources = (
         ("pr review", f"{base}/pulls/{number}/reviews"),
         ("pr review comment", f"{base}/pulls/{number}/comments"),
