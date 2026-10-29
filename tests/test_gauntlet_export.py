@@ -189,7 +189,7 @@ def test_trace_matches_schema_and_hides_ground_truth(catalog: g.Catalog) -> None
     with RunLog() as log:
         run = exfil_run(log)
         lines = g.build_trace(log, run, catalog)[24]
-        label = g.label(run, frozenset())
+        label = g.label(run, frozenset(), catalog)
     for line in lines:
         errors = sorted(TRACE_SCHEMA.iter_errors(line), key=str)
         assert not errors, errors
@@ -318,7 +318,7 @@ def test_guardrail_decisions_and_blocked_calls(catalog: g.Catalog) -> None:
             )
         log.record_controls(run.run_id, ["tool_permissions", "egress_filter"])
         lines = g.build_trace(log, run, catalog)[24]
-        label = g.label(run, frozenset({"tool_permissions", "egress_filter"}))
+        label = g.label(run, frozenset({"tool_permissions", "egress_filter"}), catalog)
     decisions = [
         (a["adg.guardrail.name"], a["adg.guardrail.stage"], a["adg.guardrail.decision"])
         for a in (line["attributes"] for line in by_type(lines, "guardrail.action"))
@@ -338,7 +338,7 @@ def test_condition_names_single_controls() -> None:
     with RunLog() as log:
         run = _run(log, "AC01", config="single-control")
     assert g.condition(run, frozenset({"approval_gate"})) == "approval_gate"
-    assert g.attack_class("AC12A-OBF") == "AC12A"
+    assert g.attack_class(g.Catalog.load().scenario("AC12A-OBF")) == "AC12A"
 
 
 def test_unknown_case_fails_closed(catalog: g.Catalog) -> None:
@@ -515,3 +515,13 @@ def test_cli_rejects_missing_db_and_unknown_experiment(tmp_path: Path) -> None:
 
 def test_module_has_no_gauntlet_runtime_dependency() -> None:
     assert "agent_detection_gauntlet" not in sys.modules
+
+
+def test_export_can_skip_runs_of_excluded_variants(tmp_path: Path, catalog: g.Catalog) -> None:
+    with RunLog() as log:
+        exfil_run(log)
+        _run(log, "AC07-S99")  # ran, then excluded from the seeded catalog
+        with pytest.raises(g.ExportError, match="not in the scenario file"):
+            g.export(log, tmp_path / "a", ["phase-test"], catalog)
+        summary = g.export(log, tmp_path / "b", ["phase-test"], catalog, skip_unlisted=True)
+    assert (summary.runs, summary.skipped_unlisted) == (1, 1)

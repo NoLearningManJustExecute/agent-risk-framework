@@ -35,7 +35,9 @@ from ..findings.schema import ASI_ID_RE, ATLAS_RE, FINDING_ID_RE, LLM_ID_RE, MCP
 DEFAULT_SCENARIOS_PATH = Path("data/attack_scenarios.json")
 
 CASE_ID_RE = re.compile(r"^AC(0[1-9]|1[0-2])[AB]?$")
-SCENARIO_ID_RE = re.compile(r"^(AC(?:0[1-9]|1[0-2])[AB]?)(-OBF)?$")
+SCENARIO_ID_RE = re.compile(r"^(AC(?:0[1-9]|1[0-2])[AB]?)(-OBF|-S[0-9]{2})?$")
+# Seeding transforms (Phase 1 corpus): paraphrase and translation of a plain scenario.
+SEEDING_TRANSFORM_RE = re.compile(r"^(paraphrase:[a-z]+|translation:[a-z]{2})$")
 CHANNELS = frozenset({"direct", "indirect", "mcp"})
 OBFUSCATIONS = frozenset({"base64", "split", "translation", "zero_width", "char_spacing"})
 CANARY_NAMES = frozenset({"system", "credentials", "outside"})
@@ -226,6 +228,8 @@ class AttackScenario:
     doc_index: dict[str, str] = field(default_factory=dict)
     mcp: McpMutation | None = None
     notes: str = ""
+    derived_from: str | None = None  # seeded variants: the plain scenario they came from
+    transform: str | None = None  # seeded variants: paraphrase:<style> or translation:<lang>
 
     @property
     def case_id(self) -> str:
@@ -236,6 +240,20 @@ class AttackScenario:
     @property
     def obfuscated(self) -> bool:
         return self.scenario_id.endswith("-OBF")
+
+    @property
+    def seeded(self) -> bool:
+        return self.derived_from is not None
+
+    @property
+    def variant_group(self) -> str:
+        """The distinct input this scenario belongs to.
+
+        An obfuscated variant is the same attack as its plain scenario under an encoding,
+        so it joins the plain scenario's group. A seeded variant is a distinct wording and
+        is its own group.
+        """
+        return self.case_id if self.obfuscated else self.scenario_id
 
     @classmethod
     def parse(cls, data: Any) -> AttackScenario:
@@ -270,6 +288,14 @@ class AttackScenario:
         notes = data.get("notes", "")
         if not isinstance(notes, str):
             raise ScenarioError(f"{sid}: notes must be a string")
+        derived_from, transform = data.get("derived_from"), data.get("transform")
+        if "-S" in sid:
+            if derived_from != SCENARIO_ID_RE.fullmatch(sid).group(1):  # type: ignore[union-attr]
+                raise ScenarioError(f"{sid}: a seeded variant derives from its plain scenario")
+            if not isinstance(transform, str) or not SEEDING_TRANSFORM_RE.fullmatch(transform):
+                raise ScenarioError(f"{sid}: transform must match {SEEDING_TRANSFORM_RE.pattern}")
+        elif derived_from is not None or transform is not None:
+            raise ScenarioError(f"{sid}: only seeded variants (-Snn) set derived_from/transform")
         return cls(
             scenario_id=sid,
             channel=channel,
@@ -285,6 +311,8 @@ class AttackScenario:
             doc_index=_string_map(sid, "doc_index", data.get("doc_index", {}), paths=False),
             mcp=mcp,
             notes=notes,
+            derived_from=derived_from,
+            transform=transform,
         )
 
 
@@ -314,6 +342,9 @@ def parse_catalog(data: Any) -> ScenarioCatalog:
         raise ScenarioError("scenario file must have a 'scenarios' list")
     cases = {cid: AttackCase.parse(cid, c) for cid, c in data["cases"].items()}
     scenarios = tuple(AttackScenario.parse(s) for s in data["scenarios"])
+    seeded = sorted(s.scenario_id for s in scenarios if s.seeded)
+    if seeded:
+        raise ScenarioError(f"seeded variants belong in the seeded catalog: {seeded}")
     ids = [s.scenario_id for s in scenarios]
     duplicates = sorted({i for i in ids if ids.count(i) > 1})
     if duplicates:
@@ -332,9 +363,52 @@ def parse_catalog(data: Any) -> ScenarioCatalog:
     return ScenarioCatalog(cases, scenarios)
 
 
-def load_catalog(path: Path | str = DEFAULT_SCENARIOS_PATH) -> ScenarioCatalog:
+def _read_json(path: Path | str) -> Any:
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+        return json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ScenarioError(f"could not parse {path}: {exc}") from exc
-    return parse_catalog(data)
+
+
+def load_catalog(path: Path | str = DEFAULT_SCENARIOS_PATH) -> ScenarioCatalog:
+    return parse_catalog(_read_json(path))
+
+
+def parse_seeded(data: Any, base: ScenarioCatalog) -> tuple[AttackScenario, ...]:
+    """Seeded variants: each derives from a plain scenario of `base` and keeps its oracle."""
+    if not isinstance(data, dict) or not isinstance(data.get("scenarios"), list):
+        raise ScenarioError("seeded catalog must have a 'scenarios' list")
+    plain = {s.scenario_id: s for s in base.scenarios if not s.obfuscated}
+    known = {s.scenario_id for s in base.scenarios}
+    out: list[AttackScenario] = []
+    for item in data["scenarios"]:
+        s = AttackScenario.parse(item)
+        if not s.seeded:
+            raise ScenarioError(f"{s.scenario_id}: the seeded catalog holds -Snn variants only")
+        parent = plain.get(s.derived_from or "")
+        if parent is None:
+            raise ScenarioError(f"{s.scenario_id}: derives from unknown {s.derived_from}")
+        if s.scenario_id in known:
+            raise ScenarioError(f"duplicate scenario id {s.scenario_id}")
+        if s.oracle != parent.oracle or s.channel != parent.channel:
+            raise ScenarioError(f"{s.scenario_id}: must keep its parent's oracle and channel")
+        same_lab = (
+            s.workspace_files == parent.workspace_files
+            and s.outside_files == parent.outside_files
+            and s.doc_index == parent.doc_index
+        )
+        if not same_lab:
+            raise ScenarioError(f"{s.scenario_id}: must keep its parent's planted files")
+        if parent.mcp is not None:
+            m, pm = s.mcp, parent.mcp
+            if m is None or (m.kind, m.tool, m.copy_to) != (pm.kind, pm.tool, pm.copy_to):
+                raise ScenarioError(f"{s.scenario_id}: must keep its parent's MCP mutation")
+            if s.user_prompt != parent.user_prompt:
+                raise ScenarioError(f"{s.scenario_id}: an MCP variant rewrites the tool only")
+        known.add(s.scenario_id)
+        out.append(s)
+    return tuple(out)
+
+
+def load_seeded(path: Path | str, base: ScenarioCatalog) -> tuple[AttackScenario, ...]:
+    return parse_seeded(_read_json(path), base)
