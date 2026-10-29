@@ -619,7 +619,10 @@ class Scanner:
     ) -> None:
         """Scan one file's bytes. ``path`` decides image handling and path-scoped exceptions."""
         shown = self.safe_label(path) if label is None else label
-        image = Path(path).suffix.lower() in IMAGE_SUFFIXES or data.startswith(IMAGE_MAGIC)
+        # First bytes only count for binary content, so a text file starting "BM25" is text.
+        image = Path(path).suffix.lower() in IMAGE_SUFFIXES or (
+            data.startswith(IMAGE_MAGIC) and decode_text(data) is None
+        )
         if image:
             fingerprint = (commit, "image-metadata", 0, path) if commit else None
             self.scan_image(data, shown, fingerprint)
@@ -667,20 +670,26 @@ def image_text(data: bytes) -> str:
                 pieces += [keyword, language, translated, _inflate(text) if compressed else text]
             else:
                 pieces.append(body)
+        # Anything appended after the image end is read as well.
+        end = data.rfind(b"IEND")
+        trailing = binary_text(data[end + 8 :]) if end >= 0 else ""
     elif data.startswith(b"\xff\xd8"):
         pieces += jpeg_metadata_segments(data)
+        # Text outside the parsed segments (after the image end, for example) is read as well.
+        trailing = binary_text(data)
     elif data.startswith(b"%PDF"):
         # Stream bodies are mostly compressed; keep the dictionaries and any XMP packets.
         dictionaries = re.sub(rb"stream\r?\n.*?endstream", b"", data, flags=re.DOTALL)
         pieces.append(dictionaries)
         pieces += re.findall(rb"<x:xmpmeta.*?</x:xmpmeta>", data, flags=re.DOTALL)
         pieces += pdf_utf16_strings(dictionaries)
+        trailing = ""
     else:
         # Unparsed formats: long runs only, so compressed bytes do not produce chance matches.
         return binary_text(data)
     joined = b"\n".join(pieces)
     runs = re.findall(rb"[\x20-\x7e]{4,}", joined) + utf16_runs(joined, 4)
-    return "\n".join(run.decode("ascii") for run in runs)
+    return "\n".join([*(run.decode("ascii") for run in runs), trailing])
 
 
 def utf16_runs(data: bytes, shortest: int) -> list[bytes]:
@@ -694,16 +703,40 @@ def binary_text(data: bytes) -> str:
     printable ASCII and UTF-16 runs of at least 10 characters."""
     pieces: list[str] = []
     if data.startswith(b"PK\x03\x04"):
-        try:
-            with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                for info in archive.infolist():
-                    if info.filename.endswith((".xml", ".rels")) and info.file_size < 1 << 22:
-                        pieces.append(archive.read(info).decode("utf-8", errors="replace"))
-        except (zipfile.BadZipFile, OSError, RuntimeError, NotImplementedError):
-            pass
+        pieces += archive_xml_text(data)
     runs = re.findall(rb"[\x20-\x7e]{10,}", data) + utf16_runs(data, 10)
     pieces += [run.decode("ascii") for run in runs]
     return "\n".join(pieces)
+
+
+ARCHIVE_TEXT_LIMIT = 16 << 20
+ARCHIVE_ENTRY_LIMIT = 2000
+
+
+def archive_xml_text(data: bytes) -> list[str]:
+    """XML parts of an Office or OpenDocument archive, within a total size budget.
+
+    A corrupt or hostile entry is skipped, never fatal: the caller still scans the raw runs.
+    """
+    texts: list[str] = []
+    budget = ARCHIVE_TEXT_LIMIT
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            for info in archive.infolist()[:ARCHIVE_ENTRY_LIMIT]:
+                if not info.filename.endswith((".xml", ".rels")) or info.file_size > budget:
+                    continue
+                try:
+                    with archive.open(info) as handle:
+                        content = handle.read(budget + 1)
+                except Exception:  # corrupt deflate, unsupported or encrypted entry
+                    continue
+                budget -= len(content)
+                if budget < 0:
+                    break
+                texts.append(content.decode("utf-8", errors="replace"))
+    except Exception:  # not a readable archive at all
+        return texts
+    return texts
 
 
 def jpeg_metadata_segments(data: bytes) -> list[bytes]:
@@ -711,10 +744,15 @@ def jpeg_metadata_segments(data: bytes) -> list[bytes]:
     segments: list[bytes] = []
     offset = 2
     while offset + 4 <= len(data) and data[offset] == 0xFF:
+        if data[offset + 1] == 0xFF:  # fill byte before a marker
+            offset += 1
+            continue
         marker = data[offset + 1]
         if marker == 0xDA:
             break
         (length,) = struct.unpack(">H", data[offset + 2 : offset + 4])
+        if length < 2:
+            break
         if 0xE0 <= marker <= 0xEF or marker == 0xFE:
             segments.append(data[offset + 4 : offset + 2 + length])
         offset += 2 + length
@@ -724,16 +762,33 @@ def jpeg_metadata_segments(data: bytes) -> list[bytes]:
 def pdf_utf16_strings(dictionaries: bytes) -> list[bytes]:
     """PDF text strings written in UTF-16 (hex or literal form), decoded to ASCII where possible."""
     found: list[bytes] = []
-    for hex_text in re.findall(rb"<FEFF([0-9A-Fa-f\s]+)>", dictionaries):
+    for hex_text in re.findall(rb"<[Ff][Ee][Ff][Ff]([0-9A-Fa-f\s]+)>", dictionaries):
         try:
             raw = bytes.fromhex(hex_text.decode("ascii"))
         except ValueError:
             continue
         found.append(raw.decode("utf-16-be", errors="replace").encode("ascii", "replace"))
-    for literal in re.findall(rb"\(\xfe\xff((?:[^()\\]|\\.)*)\)", dictionaries, flags=re.DOTALL):
-        text = literal.decode("utf-16-be", errors="replace")
-        found.append(text.encode("ascii", "replace"))
+    for literal in re.findall(rb"\(((?:[^()\\]|\\.)*)\)", dictionaries, flags=re.DOTALL):
+        raw = pdf_unescape(literal)
+        if raw.startswith(b"\xfe\xff"):
+            text = raw[2:].decode("utf-16-be", errors="replace")
+            found.append(text.encode("ascii", "replace"))
     return found
+
+
+_PDF_ESCAPES = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f"}
+
+
+def pdf_unescape(literal: bytes) -> bytes:
+    """Bytes of a PDF literal string body: octal and backslash escapes resolved."""
+
+    def replace(match: re.Match[bytes]) -> bytes:
+        escaped = match.group(1)
+        if escaped[:1].isdigit():
+            return bytes([int(escaped, 8) & 0xFF])
+        return _PDF_ESCAPES.get(escaped, escaped)
+
+    return re.sub(rb"\\([0-7]{1,3}|.)", replace, literal, flags=re.DOTALL)
 
 
 def _inflate(data: bytes) -> bytes:

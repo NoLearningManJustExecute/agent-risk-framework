@@ -133,9 +133,13 @@ cutoff <40 hex commit>
   safety net and can be skipped.
 - The blocking `leak-guard` CI job scans only what a change adds: `--range base..head` and `--pr`
   on pull requests, `--range before..after` on pushes to main.
-- That job runs the guard from the base commit, so a change cannot weaken the guard that checks
-  it. It uses the change's own copy only when the base has no guard with range support (the
-  first install, or the upgrade that adds it), and says which copy it ran.
+- That job runs the guard copy from the default branch on pull requests and from the previous
+  main on pushes, so editing `tools/leak_guard.py` cannot weaken the guard that checks the edit.
+  It uses the change's own copy only when that commit has no guard with range support (the first
+  install, or the upgrade that adds it), and says which copy it ran.
+- Limit: the workflow files themselves are read from the change, so a change to `.github/` could
+  still alter the gate. CI flags such changes with a warning and CODEOWNERS assigns them to the
+  owner; review them like code.
 - The `Leak guard full scan` workflow runs `--all` against the baseline every week and on demand.
   It does not block merges.
 - The `PR text guard` workflow runs `--pr` again whenever a comment or review is posted or edited,

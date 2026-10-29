@@ -1313,3 +1313,62 @@ def test_private_key_with_double_escaped_newlines() -> None:
     key = "-" * 5 + "BEGIN RSA " + "PRIVATE KEY" + "-" * 5
     text = key + BACKSLASH * 2 + "n" + noise(64) + BACKSLASH * 2 + "n"
     assert "private-key" in rules_hit(text)
+
+
+# ---------------------------------------------------------------- final review follow-ups
+
+
+def test_text_after_the_image_end_is_scanned() -> None:
+    address = ("alex" + AT + "gmail.com").encode()
+    jpeg = b"\xff\xd8\xff\xff\xfe" + struct.pack(">H", 2 + 20) + b"comment " + address
+    jpeg += b"\xff\xda\x00\x02pixels\xff\xd9 appended " + address + b" tail"
+    text = leak_guard.image_text(jpeg)
+    assert text.count("alex" + AT + "gmail.com") >= 2
+    assert leak_guard.jpeg_metadata_segments(b"\xff\xd8\xff\xe1\x00\x01") == []
+    trailing_png = png() + b" appended " + address + b" tail"
+    assert "alex" + AT + "gmail.com" in leak_guard.image_text(trailing_png)
+
+
+def test_corrupt_and_oversized_archives_never_crash() -> None:
+    good = io.BytesIO()
+    with zipfile.ZipFile(good, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", "<w:t>" + "x" * 4000 + "</w:t>")
+        archive.writestr("docProps/core.xml", f"<dc:creator>{SECRET_WORD}</dc:creator>")
+    data = bytearray(good.getvalue())
+    start = data.find(b"word/document.xml") + len("word/document.xml")
+    data[start + 5 : start + 25] = b"\xff" * 20  # corrupt the first entry's deflate stream
+    texts = leak_guard.archive_xml_text(bytes(data))
+    assert any(SECRET_WORD in text for text in texts)
+    assert leak_guard.archive_xml_text(b"PK\x03\x04 not really") == []
+
+
+def test_archive_budget_limits_total_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(leak_guard, "ARCHIVE_TEXT_LIMIT", 1000)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for index in range(5):
+            archive.writestr(f"part{index}.xml", "y" * 400)
+    texts = leak_guard.archive_xml_text(buffer.getvalue())
+    assert sum(len(text) for text in texts) <= 1000
+
+
+def test_text_starting_like_an_image_header_is_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    notes = tmp_path / "results.md"
+    notes.write_text("BM25 results\nwe strip EXIF data\n", encoding="utf-8")
+    code, output = run_guard(
+        ["--root", str(tmp_path), "--text", str(notes)], {"LEAK_DENYLIST": DENYLIST_TEXT}, capsys
+    )
+    assert code == 0
+    assert "image" not in output
+
+
+def test_pdf_lowercase_hex_and_octal_literals_are_decoded() -> None:
+    lower = "feff" + SECRET_WORD.encode("utf-16-be").hex()
+    octal = "".join(f"\\{byte:03o}" for byte in b"\xfe\xff" + "riley".encode("utf-16-be"))
+    pdf = f"%PDF-1.7\n<< /Author <{lower}> /Title ({octal}) >>\n".encode()
+    text = leak_guard.image_text(pdf)
+    assert SECRET_WORD in text
+    assert "riley" in text
+    assert leak_guard.pdf_unescape(b"a\\(b\\)\\n\\\\") == b"a(b)\n\\"
