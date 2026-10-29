@@ -1,0 +1,6 @@
+# Leak guard tool, configuration, workflows and hooks need the owner's review, like code.
+/.leakguard-baseline @NoLearningManJustExecute
+/.leakguard-allow @NoLearningManJustExecute
+/tools/ @NoLearningManJustExecute
+/.github/ @NoLearningManJustExecute
+/.githooks/ @NoLearningManJustExecute
