@@ -392,6 +392,19 @@ def parse_seeded(data: Any, base: ScenarioCatalog) -> tuple[AttackScenario, ...]
             raise ScenarioError(f"duplicate scenario id {s.scenario_id}")
         if s.oracle != parent.oracle or s.channel != parent.channel:
             raise ScenarioError(f"{s.scenario_id}: must keep its parent's oracle and channel")
+        same_lab = (
+            s.workspace_files == parent.workspace_files
+            and s.outside_files == parent.outside_files
+            and s.doc_index == parent.doc_index
+        )
+        if not same_lab:
+            raise ScenarioError(f"{s.scenario_id}: must keep its parent's planted files")
+        if parent.mcp is not None:
+            m, pm = s.mcp, parent.mcp
+            if m is None or (m.kind, m.tool, m.copy_to) != (pm.kind, pm.tool, pm.copy_to):
+                raise ScenarioError(f"{s.scenario_id}: must keep its parent's MCP mutation")
+            if s.user_prompt != parent.user_prompt:
+                raise ScenarioError(f"{s.scenario_id}: an MCP variant rewrites the tool only")
         known.add(s.scenario_id)
         out.append(s)
     return tuple(out)

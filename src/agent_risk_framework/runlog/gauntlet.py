@@ -534,6 +534,7 @@ class ExportSummary:
     runs: int
     skipped_errors: int
     files: tuple[Path, ...]
+    skipped_unlisted: int = 0
 
 
 def selected_runs(log: RunLog, experiments: Sequence[str]) -> Iterator[RunRecord]:
@@ -554,6 +555,7 @@ def export(
     *,
     ks: Sequence[int] = (DEFAULT_K,),
     redactor: Callable[[str], str] | None = None,
+    skip_unlisted: bool = False,
 ) -> ExportSummary:
     """Write `<out>/k<K>/traces/<experiment>.jsonl` per K and one `<out>/labels.jsonl`.
 
@@ -568,10 +570,18 @@ def export(
 
     traces: dict[tuple[int, str], dict[str, list[dict[str, Any]]]] = {}
     labels: dict[str, dict[str, Any]] = {}
-    skipped = 0
+    skipped = unlisted = 0
     for run in selected_runs(log, experiments):
         if run.outcome == Outcome.ERROR or run.run_id is None:
             skipped += 1
+            continue
+        if (
+            skip_unlisted
+            and run.case_kind == CaseKind.ATTACK
+            and run.case_id not in catalog.scenarios
+        ):
+            # A variant excluded after it ran (duplicate, or not the same attack on review).
+            unlisted += 1
             continue
         controls = frozenset(str(c) for c in (log.controls(run.run_id) or ()))
         for k, lines in build_trace(log, run, catalog, ks=ks, redactor=redactor).items():
@@ -585,7 +595,7 @@ def export(
         path = out / f"k{k}" / "traces" / f"{experiment}.jsonl"
         _write_lines(path, (line for t in sorted(by_trace) for line in by_trace[t]))
         files.append(path)
-    return ExportSummary(len(labels), skipped, tuple(files))
+    return ExportSummary(len(labels), skipped, tuple(files), unlisted)
 
 
 def _write_lines(path: Path, records: Iterable[dict[str, Any]]) -> None:
@@ -668,6 +678,7 @@ def write_manifest(
         "content_ref_k": list(ks),
         "runs_exported": summary.runs,
         "runs_skipped_error": summary.skipped_errors,
+        "runs_skipped_unlisted": summary.skipped_unlisted,
         "files": {f.relative_to(out).as_posix(): _sha256(f) for f in sorted(summary.files)},
     }
     path = out / "export_manifest.json"
@@ -685,6 +696,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
     parser.add_argument("--benign", default=str(DEFAULT_BENIGN))
     parser.add_argument("--seeded", default=str(DEFAULT_SEEDED))
+    parser.add_argument(
+        "--skip-unlisted",
+        action="store_true",
+        help="skip runs of attack scenarios no longer in the catalog (counted in the manifest)",
+    )
     parser.add_argument("--registry", default=str(DEFAULT_REGISTRY))
     parser.add_argument("--leak-guard", default=str(DEFAULT_LEAK_GUARD))
     args = parser.parse_args(argv)
@@ -704,7 +720,9 @@ def main(argv: list[str] | None = None) -> None:
     catalog = Catalog.load(args.scenarios, args.benign, args.registry, args.seeded)
     try:
         with RunLog(db) as log:
-            summary = export(log, staging, args.experiment, catalog, ks=ks)
+            summary = export(
+                log, staging, args.experiment, catalog, ks=ks, skip_unlisted=args.skip_unlisted
+            )
             models = {r.model for e in args.experiment for r in log.runs(e)}
         manifest = write_manifest(
             staging,

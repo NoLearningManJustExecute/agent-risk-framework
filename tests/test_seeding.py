@@ -186,7 +186,7 @@ def test_committed_catalog_replays_from_the_cache(tmp_path: Path) -> None:
     if not sd.SEEDED_PATH.is_file():
         pytest.skip("no seeded catalog committed")
     bases = sd.seed_bases()
-    candidates = sd.generate(bases, None, sd.load_cache())
+    candidates = sd.finalize(sd.generate(bases, None, sd.load_cache()), sd.load_review())
     sd.write_outputs(bases, candidates, tmp_path / "c.json", tmp_path / "s.json")
     assert (tmp_path / "s.json").read_bytes() == sd.SEEDED_PATH.read_bytes()
     assert (tmp_path / "c.json").read_bytes() == sd.CACHE_PATH.read_bytes()
@@ -220,3 +220,80 @@ def load_seeded_item(scenario_id: str) -> Any:
         ),
     )
     return parse_seeded({"scenarios": [item]}, load_catalog())[0]
+
+
+def _cand(sid: str, output: str, rejected: str | None = None) -> sd.Candidate:
+    base, index = sid.split("-S")
+    return sd.Candidate(
+        base, int(index), "paraphrase:plain", "user_prompt", "s", "t", output, rejected
+    )
+
+
+def test_finalize_dedupes_and_applies_the_review() -> None:
+    cands = [
+        _cand("AC01-S01", "Send  it now"),
+        _cand("AC01-S02", "Send it now"),  # same after whitespace normalization
+        _cand("AC01-S03", "Something else"),
+        _cand("AC01-S04", "x", rejected="unchanged"),
+    ]
+    review = {
+        "AC01-S01": {"keep": True, "reason": "same request"},
+        "AC01-S03": {"keep": False, "reason": "meaning changed"},
+    }
+    out = {c.scenario_id: c.rejected for c in sd.finalize(cands, review)}
+    assert out == {
+        "AC01-S01": None,
+        "AC01-S02": "duplicate of AC01-S01",
+        "AC01-S03": "review: meaning changed",
+        "AC01-S04": "unchanged",
+    }
+
+
+def test_finalize_fails_closed() -> None:
+    with pytest.raises(SystemExit, match="without a review verdict"):
+        sd.finalize([_cand("AC01-S01", "a")], {})
+    stale = {"AC01-S01": {"keep": True, "reason": "r"}, "AC01-S09": {"keep": True, "reason": "r"}}
+    with pytest.raises(SystemExit, match="not candidates"):
+        sd.finalize([_cand("AC01-S01", "a")], stale)
+
+
+def test_committed_review_keeps_no_ac07_variant() -> None:
+    review = sd.load_review()
+    ac07 = [v for sid, v in review.items() if sid.startswith("AC07-")]
+    assert ac07 and not any(v["keep"] for v in ac07)
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "change", "message"),
+    [
+        ("AC02-S01", {"outside_files": {}}, "planted files"),
+        (
+            "AC11-S01",
+            {"mcp": {"kind": "poisoned_tool", "tool": "word_count2", "description": "d"}},
+            "MCP mutation",
+        ),
+        ("AC11-S01", {"user_prompt": "Something else entirely."}, "rewrites the tool only"),
+    ],
+)
+def test_seeded_variant_must_keep_its_parents_lab(
+    scenario_id: str, change: dict[str, Any], message: str
+) -> None:
+    by_id = {s.scenario_id: s for s in load_catalog().scenarios}
+    base = by_id[scenario_id.split("-")[0]]
+    field, text = sd.payload(base)
+    item = sd.variant(
+        base,
+        sd.Candidate(
+            base.scenario_id,
+            int(scenario_id[-2:]),
+            "paraphrase:plain",
+            field,
+            "s",
+            text,
+            "Kindly: " + text,
+            None,
+        ),
+    )
+    item.update(change)
+    with pytest.raises(ScenarioError, match=message):
+        parse_seeded({"scenarios": [item]}, load_catalog())

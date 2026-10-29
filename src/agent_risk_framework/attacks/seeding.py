@@ -15,6 +15,12 @@ byte for byte. An output is accepted only if it keeps every token the attack dep
 on (addresses, paths, tool and field names, upper-case markers) and actually changed;
 the rest are recorded as rejected with the reason.
 
+The lexical check cannot tell whether a rewrite is still the same attack, so two more
+steps follow: an output identical to an earlier one of the same base is dropped as a
+duplicate, and every remaining variant must have a verdict in `data/seeding/review.json`,
+a recorded meaning review against the parent attack's elements. A variant without a
+verdict stops generation; one the review rejects is recorded with the reason.
+
 Accepted variants are written to `data/seeding/seeded_scenarios.json` as `<case>-Snn`
 scenarios (`nn` is the transform's fixed index, so ids never shift). Each is run live
 and scored by its parent's deterministic oracle; one that no longer succeeds is an
@@ -33,6 +39,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import re
@@ -48,6 +55,7 @@ from .scenarios import DEFAULT_SCENARIOS_PATH, AttackScenario, load_catalog, loa
 SEEDING_DIR = Path("data/seeding")
 CACHE_PATH = SEEDING_DIR / "variant_cache.json"
 SEEDED_PATH = SEEDING_DIR / "seeded_scenarios.json"
+REVIEW_PATH = SEEDING_DIR / "review.json"
 MODEL = "llama3.1:8b"
 SEED = 1337
 TEMPERATURE = 0.0
@@ -261,6 +269,45 @@ def generate(
     return out
 
 
+def load_review(path: Path = REVIEW_PATH) -> dict[str, dict[str, Any]]:
+    """scenario id -> {"keep": bool, "reason": str}."""
+    if not path.is_file():
+        return {}
+    verdicts = json.loads(path.read_text(encoding="utf-8"))["verdicts"]
+    for sid, v in verdicts.items():
+        if not isinstance(v.get("keep"), bool) or not str(v.get("reason", "")).strip():
+            raise SystemExit(f"review of {sid} needs keep (true or false) and a reason")
+    return verdicts
+
+
+def finalize(candidates: Sequence[Candidate], review: dict[str, dict[str, Any]]) -> list[Candidate]:
+    """Drop exact duplicates, then apply the recorded meaning review. Fails closed: every
+    variant the lexical check accepted needs a verdict, and every verdict a variant."""
+    out: list[Candidate] = []
+    first: dict[tuple[str, str], str] = {}
+    unreviewed: list[str] = []
+    for c in candidates:
+        if c.rejected is None:
+            key = (c.base, " ".join(c.output.split()))
+            if key in first:
+                c = dataclasses.replace(c, rejected=f"duplicate of {first[key]}")
+            else:
+                first[key] = c.scenario_id
+                verdict = review.get(c.scenario_id)
+                if verdict is None:
+                    unreviewed.append(c.scenario_id)
+                elif not verdict["keep"]:
+                    c = dataclasses.replace(c, rejected=f"review: {verdict['reason']}")
+        out.append(c)
+    if unreviewed:
+        raise SystemExit(f"variants without a review verdict: {unreviewed}")
+    reviewable = set(first.values())
+    stale = sorted(set(review) - reviewable)
+    if stale:
+        raise SystemExit(f"review verdicts for variants that are not candidates: {stale}")
+    return out
+
+
 def variant(base: AttackScenario, c: Candidate) -> dict[str, Any]:
     """The seeded scenario: the parent with its payload replaced."""
     item: dict[str, Any] = {
@@ -365,7 +412,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         bases = seed_bases()
         provider = None if args.offline else OllamaLLMProvider(MODEL)
-        candidates = generate(bases, provider, load_cache())
+        candidates = finalize(generate(bases, provider, load_cache()), load_review())
         kept, rejected = write_outputs(bases, candidates)
         sys.stdout.write(f"{kept} variants accepted, {rejected} rejected\n")
         return

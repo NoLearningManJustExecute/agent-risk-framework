@@ -515,3 +515,13 @@ def test_cli_rejects_missing_db_and_unknown_experiment(tmp_path: Path) -> None:
 
 def test_module_has_no_gauntlet_runtime_dependency() -> None:
     assert "agent_detection_gauntlet" not in sys.modules
+
+
+def test_export_can_skip_runs_of_excluded_variants(tmp_path: Path, catalog: g.Catalog) -> None:
+    with RunLog() as log:
+        exfil_run(log)
+        _run(log, "AC07-S99")  # ran, then excluded from the seeded catalog
+        with pytest.raises(g.ExportError, match="not in the scenario file"):
+            g.export(log, tmp_path / "a", ["phase-test"], catalog)
+        summary = g.export(log, tmp_path / "b", ["phase-test"], catalog, skip_unlisted=True)
+    assert (summary.runs, summary.skipped_unlisted) == (1, 1)

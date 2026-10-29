@@ -20,6 +20,8 @@ Output:
 
 Seeded variants (`data/seeding/seeded_scenarios.json`, see docs/corpus_seeding.md) are loaded
 alongside the authored scenarios when the file exists; `--seeded` points elsewhere.
+`--skip-unlisted` skips runs of attack scenarios that are no longer in the catalog (a seeded
+variant excluded after it ran) and counts them as `runs_skipped_unlisted` in the manifest.
 Runs whose outcome is `error` did not complete and are skipped; the manifest counts them.
 `--out` must be empty or a previous export (exactly the manifest, labels and `k<K>/traces/`
 files). The export is written to `<out>.partial` first and replaces `--out` only after the leak
