@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -36,6 +37,18 @@ Q2_PLAN = (Path("data/agent_sandbox/finance/q2_plan.csv")).read_text(encoding="u
 @pytest.fixture(scope="module")
 def catalog() -> g.Catalog:
     return g.Catalog.load()
+
+
+@pytest.fixture
+def guard_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A throwaway denylist, so the real guard runs the same in CI and locally.
+
+    Without any denylist the guard exits 2 (setup problem) and the export refuses.
+    """
+    salt = "00" * 16
+    word = hashlib.sha256(f"{salt}\nplaceholder-identifier".encode()).hexdigest()
+    monkeypatch.delenv("LEAK_DENYLIST_FILE", raising=False)
+    monkeypatch.setenv("LEAK_DENYLIST", f"salt {salt}\nmaxwords 1\nhash {word}\n")
 
 
 def _run(
@@ -358,7 +371,7 @@ def test_export_writes_one_folder_per_k(tmp_path: Path, catalog: g.Catalog) -> N
         assert len({json.loads(x)["trace_id"] for x in lines}) == 3
 
 
-def test_leak_guard_blocks_and_requires_the_guard(tmp_path: Path) -> None:
+def test_leak_guard_blocks_and_requires_the_guard(tmp_path: Path, guard_env: None) -> None:
     guard = Path("tools/leak_guard.py")
     clean = tmp_path / "clean.jsonl"
     clean.write_text('{"a": "nothing to see"}\n', encoding="utf-8")
@@ -374,7 +387,10 @@ def test_leak_guard_blocks_and_requires_the_guard(tmp_path: Path) -> None:
 
 
 def test_cli_end_to_end_and_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    guard_env: None,
 ) -> None:
     db = _db(tmp_path)
     out = tmp_path / "export"
