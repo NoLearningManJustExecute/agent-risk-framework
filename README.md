@@ -220,10 +220,13 @@ How long each command takes:
 ## Demo
 
 [docs/demo.md](docs/demo.md): AC01 against the undefended agent, then with
-`tool_permissions`, then with all six controls. It is a live `llama3.1:8b` run,
-rendered as an animated terminal.
+`tool_permissions`, then with all six controls. This is a terminal recording of a
+live run against a local `llama3.1:8b`, recorded with `vhs` from
+[docs/demo/demo.tape](docs/demo/demo.tape). Nothing in it is scripted or edited.
 
-![Demo transcript: attack succeeds undefended, blocked with controls on](docs/demo/demo.svg)
+![Recording: AC01 succeeds undefended, then is blocked by tool_permissions and by all six controls](docs/demo/demo.gif)
+
+The same run as an animated SVG transcript: [docs/demo/demo.svg](docs/demo/demo.svg).
 
 ## Audit-log export
 
