@@ -77,6 +77,20 @@
       "description": "0.2: the experiment arm (condition) the trace ran under.",
       "title": "Condition"
     },
+    "derived_from": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "0.3: the scenario a seeded variant was derived from (paraphrase or translation), or null for an authored scenario or task.",
+      "title": "Derived From"
+    },
     "guardrails": {
       "$ref": "#/$defs/Guardrails"
     },
@@ -113,7 +127,8 @@
     "schema_version": {
       "enum": [
         "0.1",
-        "0.2"
+        "0.2",
+        "0.3"
       ],
       "title": "Schema Version",
       "type": "string"
@@ -164,6 +179,20 @@
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
       "title": "Trace Id",
       "type": "string"
+    },
+    "variant_group": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "0.3: the distinct input this trace ran. The held-out split assigns whole groups, so near-identical inputs never sit on both sides.",
+      "title": "Variant Group"
     }
   },
   "required": [

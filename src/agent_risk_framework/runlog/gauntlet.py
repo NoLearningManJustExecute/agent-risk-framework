@@ -65,7 +65,7 @@ from ..agent.client import connect_in_process, list_tool_defs
 from ..agent.model import ToolDef
 from ..agent.policy import STATED_POLICY
 from ..attacks.lab import apply_post_approval, build_lab_server, lab_sandbox
-from ..attacks.scenarios import AttackScenario, load_catalog
+from ..attacks.scenarios import AttackScenario, load_catalog, load_seeded
 from ..benign import BenignTask, load_benign_tasks
 from ..enums import CaseKind, DecisionAction, DecisionStage, DefenseConfig, Outcome
 from ..guardrails.integrity import DEFAULT_REGISTRY, ToolRegistry, definition_hash
@@ -83,12 +83,13 @@ from .provenance import (
     redact,
 )
 
-SCHEMA_VERSION = "0.2"
+SCHEMA_VERSION = "0.3"
 SOURCE = "agent-risk-framework"
 AGENT_NAME = "agent-risk-framework"
 PROVIDER = "ollama"
 DEFAULT_SCENARIOS = Path("data/attack_scenarios.json")
 DEFAULT_BENIGN = Path("data/benign_tasks.json")
+DEFAULT_SEEDED = Path("data/seeding/seeded_scenarios.json")
 DEFAULT_LEAK_GUARD = Path("tools/leak_guard.py")
 TICK = timedelta(microseconds=1)
 # Every trace starts here. Real start times would leak the label: the lab runs all attack
@@ -120,9 +121,9 @@ def source_run_id(run: RunRecord) -> str:
     return f"{run.experiment_id}:{run.case_kind}:{run.case_id}:{run.run_index}"
 
 
-def attack_class(scenario_id: str) -> str:
-    """The scenario family: AC01 and its obfuscated variant AC01-OBF are one class."""
-    return scenario_id.removesuffix("-OBF")
+def attack_class(scenario: AttackScenario) -> str:
+    """The scenario family: AC01, AC01-OBF and the seeded AC01-Snn are one class."""
+    return scenario.case_id
 
 
 def condition(run: RunRecord, controls: frozenset[str]) -> str:
@@ -191,10 +192,15 @@ class Catalog:
         scenarios: Path | str = DEFAULT_SCENARIOS,
         benign: Path | str = DEFAULT_BENIGN,
         registry: Path | str = DEFAULT_REGISTRY,
+        seeded: Path | str | None = DEFAULT_SEEDED,
     ) -> Catalog:
+        """The authored scenarios plus, when the file exists, the seeded variants."""
         catalog = load_catalog(scenarios)
+        variants = (
+            load_seeded(seeded, catalog) if seeded is not None and Path(seeded).is_file() else ()
+        )
         return cls(
-            {s.scenario_id: s for s in catalog.scenarios},
+            {s.scenario_id: s for s in (*catalog.scenarios, *variants)},
             {t.task_id: t for t in load_benign_tasks(benign)},
             ToolRegistry.load(registry),
         )
@@ -491,14 +497,20 @@ def _check_integrity(lines: Sequence[dict[str, Any]]) -> None:
         seen[span] = i
 
 
-def label(run: RunRecord, controls: frozenset[str]) -> dict[str, Any]:
-    """The run's ground truth. The attack outcome is the scenario's deterministic oracle."""
+def label(run: RunRecord, controls: frozenset[str], catalog: Catalog) -> dict[str, Any]:
+    """The run's ground truth. The attack outcome is the scenario's deterministic oracle.
+
+    `variant_group` is the distinct input the run executed: a seeded variant is its own
+    group, an obfuscated variant shares its plain scenario's group, and a benign task is
+    its own group. The held-out split assigns whole groups.
+    """
     malicious = run.case_kind == CaseKind.ATTACK
+    scenario = catalog.scenario(run.case_id) if malicious else None
     return {
         "schema_version": SCHEMA_VERSION,
         "trace_id": trace_id(run),
         "label": "malicious" if malicious else "benign",
-        "attack_class": attack_class(run.case_id) if malicious else None,
+        "attack_class": attack_class(scenario) if scenario else None,
         "attack_succeeded": (run.outcome == Outcome.SUCCEEDED) if malicious else None,
         "mutation": None,
         "guardrails": "on" if controls else "off",
@@ -508,6 +520,8 @@ def label(run: RunRecord, controls: frozenset[str]) -> dict[str, Any]:
         "task_id": None if malicious else run.case_id,
         "condition": condition(run, controls),
         "source_run_id": source_run_id(run),
+        "variant_group": scenario.variant_group if scenario else run.case_id,
+        "derived_from": scenario.derived_from if scenario else None,
     }
 
 
@@ -562,7 +576,7 @@ def export(
         controls = frozenset(str(c) for c in (log.controls(run.run_id) or ()))
         for k, lines in build_trace(log, run, catalog, ks=ks, redactor=redactor).items():
             traces.setdefault((k, run.experiment_id), {})[trace_id(run)] = lines
-        labels[trace_id(run)] = label(run, controls)
+        labels[trace_id(run)] = label(run, controls, catalog)
 
     out.mkdir(parents=True, exist_ok=True)
     files = [out / "labels.jsonl"]
@@ -670,6 +684,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model-digest", default=None)
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
     parser.add_argument("--benign", default=str(DEFAULT_BENIGN))
+    parser.add_argument("--seeded", default=str(DEFAULT_SEEDED))
     parser.add_argument("--registry", default=str(DEFAULT_REGISTRY))
     parser.add_argument("--leak-guard", default=str(DEFAULT_LEAK_GUARD))
     args = parser.parse_args(argv)
@@ -686,7 +701,7 @@ def main(argv: list[str] | None = None) -> None:
     staging = out.with_name(out.name + ".partial")
     if staging.exists():
         parser.error(f"{staging.name} exists from an interrupted export; remove it first")
-    catalog = Catalog.load(args.scenarios, args.benign, args.registry)
+    catalog = Catalog.load(args.scenarios, args.benign, args.registry, args.seeded)
     try:
         with RunLog(db) as log:
             summary = export(log, staging, args.experiment, catalog, ks=ks)

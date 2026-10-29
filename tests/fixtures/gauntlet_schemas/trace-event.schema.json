@@ -49,7 +49,8 @@
       "description": "Trace schema version.",
       "enum": [
         "0.1",
-        "0.2"
+        "0.2",
+        "0.3"
       ],
       "title": "Schema Version",
       "type": "string"

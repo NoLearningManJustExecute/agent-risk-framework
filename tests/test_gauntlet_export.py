@@ -189,7 +189,7 @@ def test_trace_matches_schema_and_hides_ground_truth(catalog: g.Catalog) -> None
     with RunLog() as log:
         run = exfil_run(log)
         lines = g.build_trace(log, run, catalog)[24]
-        label = g.label(run, frozenset())
+        label = g.label(run, frozenset(), catalog)
     for line in lines:
         errors = sorted(TRACE_SCHEMA.iter_errors(line), key=str)
         assert not errors, errors
@@ -318,7 +318,7 @@ def test_guardrail_decisions_and_blocked_calls(catalog: g.Catalog) -> None:
             )
         log.record_controls(run.run_id, ["tool_permissions", "egress_filter"])
         lines = g.build_trace(log, run, catalog)[24]
-        label = g.label(run, frozenset({"tool_permissions", "egress_filter"}))
+        label = g.label(run, frozenset({"tool_permissions", "egress_filter"}), catalog)
     decisions = [
         (a["adg.guardrail.name"], a["adg.guardrail.stage"], a["adg.guardrail.decision"])
         for a in (line["attributes"] for line in by_type(lines, "guardrail.action"))
@@ -338,7 +338,7 @@ def test_condition_names_single_controls() -> None:
     with RunLog() as log:
         run = _run(log, "AC01", config="single-control")
     assert g.condition(run, frozenset({"approval_gate"})) == "approval_gate"
-    assert g.attack_class("AC12A-OBF") == "AC12A"
+    assert g.attack_class(g.Catalog.load().scenario("AC12A-OBF")) == "AC12A"
 
 
 def test_unknown_case_fails_closed(catalog: g.Catalog) -> None:

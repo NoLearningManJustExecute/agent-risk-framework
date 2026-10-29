@@ -1,0 +1,18 @@
+# Phase 1 corpus seeding (agent-detection-gauntlet): the seeded variants in
+# data/seeding/seeded_scenarios.json, live, under the baseline and combined arms.
+# Same model, seed scheme and temperature as phase4_ablation.yaml; each run uses
+# seed + run_index at temperature 0. `config` and `experiment_id` are placeholders the
+# seeding driver replaces per arm (phase1-seeding-<arm>).
+# runs: 3, not 10. At temperature 0 a scenario's runs repeat (the variant group, not the run,
+# is the unit of independence); three runs show whether an outcome is stable at a third of the
+# cost, which matters because some translated variants take minutes per run.
+experiment_id: phase1-seeding
+description: Seeded paraphrase and translation variants, baseline and combined, N=3.
+config: baseline
+attack_set: data/attack_scenarios.json
+runs: 3
+seed: 1337
+temperature: 0.0
+provider: ollama
+model: llama3.1:8b
+benign_set: data/benign_tasks.json
