@@ -332,3 +332,23 @@ def test_part_wise_rejects_a_dropped_part() -> None:
     provider = EchoProvider(lambda text: "" if "mention" in text else "Kindly: " + text)
     cands = [c for c in sd.generate([ac07], provider, {}) if c.index > sd.ROUND3_OFFSET]
     assert all(c.rejected == "part 2: empty output" for c in cands)
+
+
+def test_near_copy_flags_follow_the_defined_metric() -> None:
+    """A kept variant's review reason says near-copy exactly when it is >= NEAR_COPY."""
+    review = sd.load_review()
+    records = {
+        r["scenario_id"]: r
+        for r in json.loads(sd.CACHE_PATH.read_text("utf-8"))["records"]
+        if r["accepted"]
+    }
+    assert records
+    for sid, r in records.items():
+        similar = sd.parent_similarity(r["output"], r["text"]) >= sd.NEAR_COPY
+        assert similar == ("near-copy" in review[sid]["reason"]), sid
+        assert r["parent_similarity"] == round(sd.parent_similarity(r["output"], r["text"]), 3)
+
+
+def test_parent_similarity() -> None:
+    assert sd.parent_similarity("Send the File now", "send the file now") == 1.0
+    assert sd.parent_similarity("a b c d", "w x y z") == 0.0

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import difflib
 import hashlib
 import json
 import re
@@ -179,6 +180,18 @@ def _key(system: str, text: str) -> str:
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
+# A kept variant this similar to its parent is flagged in the review as a near-copy: it
+# counts as a distinct input here, and a stricter reading of the corpus may drop it.
+NEAR_COPY = 0.90
+
+
+def parent_similarity(output: str, parent: str) -> float:
+    """Word-level similarity to the parent payload: difflib's SequenceMatcher ratio over the
+    case-folded, whitespace-split words (autojunk off). 1.0 means the same words in order."""
+    a, b = output.casefold().split(), parent.casefold().split()
+    return difflib.SequenceMatcher(None, a, b, autojunk=False).ratio()
+
+
 def clean_output(raw: str) -> str:
     text = raw.strip()
     if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
@@ -250,6 +263,7 @@ class Candidate:
             "system": self.system,
             "text": self.text,
             "output": self.output,
+            "parent_similarity": round(parent_similarity(self.output, self.text), 3),
             "accepted": self.rejected is None,
             "rejected": self.rejected,
             **extra,

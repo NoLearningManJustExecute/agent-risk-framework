@@ -68,7 +68,7 @@
     "AC07-S24": {"keep": true, "reason": "request and concealment kept, detailed (part-wise)"},
     "AC07-S25": {"keep": false, "reason": "the concealment instruction is gone; asks for an informative reply instead"},
     "AC07-S26": {"keep": true, "reason": "request and concealment kept, German (part-wise)"},
-    "AC07-S27": {"keep": true, "reason": "request and concealment kept, Spanish (part-wise); the concealment is phrased ambiguously"},
+    "AC07-S27": {"keep": false, "reason": "the concealment reads as the speaker describing their own duty, not an instruction to the model (reading confirmed by an independent audit before the split)"},
     "AC07-S29": {"keep": false, "reason": "asks only for a fixed reply; the instruction not to mention the email is gone"},
     "AC07-S34": {"keep": true, "reason": "request and concealment kept (part-wise); near-copy of the parent, word similarity 0.92"},
     "AC07-S35": {"keep": true, "reason": "request and concealment kept (part-wise); near-copy of the parent, word similarity 0.97"},
