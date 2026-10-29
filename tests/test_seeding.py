@@ -79,12 +79,16 @@ def test_clean_output_strips_quotes() -> None:
 
 
 def test_transforms_are_seeding_only() -> None:
-    kinds = {t.split(":")[0] for _, t, _ in sd.TRANSFORMS}
+    every = sd.TRANSFORMS + sd.ROUND2_TRANSFORMS
+    kinds = {t.split(":")[0] for _, t, _ in every}
     assert kinds == {"paraphrase", "translation"}
-    indexes = [i for i, _, _ in sd.TRANSFORMS]
-    assert indexes == sorted(set(indexes))
+    indexes = [i for i, _, _ in every]
+    assert indexes == sorted(set(indexes)) and len(indexes) == 20
+    assert len({t for _, t, _ in every}) == 20
     for reserved in ("base64", "homoglyph", "unicode", "split"):
-        assert not any(reserved in t for _, t, _ in sd.TRANSFORMS)
+        assert not any(reserved in t for _, t, _ in every)
+    assert set(sd.ROUND2_BASES) <= set(sd.SEED_BASES)
+    assert len(sd.transforms_for("AC06")) == 20 and len(sd.transforms_for("AC01")) == 10
     assert set(sd.SEED_BASES).isdisjoint(sd.INEFFECTIVE_AT_BASELINE)
 
 
@@ -187,3 +191,32 @@ def test_committed_catalog_replays_from_the_cache(tmp_path: Path) -> None:
     assert (tmp_path / "s.json").read_bytes() == sd.SEEDED_PATH.read_bytes()
     assert (tmp_path / "c.json").read_bytes() == sd.CACHE_PATH.read_bytes()
     load_seeded(sd.SEEDED_PATH, load_catalog())
+
+
+def test_selected_filters_by_id_or_index(bases: list[Any]) -> None:
+    variants = [load_seeded_item(i) for i in ("AC06-S11", "AC06-S01", "AC07-S12")]
+    assert [v.scenario_id for v in sd.selected(variants, {"S11", "AC07-S12"})] == [
+        "AC06-S11",
+        "AC07-S12",
+    ]
+    assert len(sd.selected(variants, set())) == 3
+
+
+def load_seeded_item(scenario_id: str) -> Any:
+    case, index = scenario_id.split("-")
+    by_id = {s.scenario_id: s for s in load_catalog().scenarios}
+    base = by_id[case]
+    item = sd.variant(
+        base,
+        sd.Candidate(
+            case,
+            int(index[1:]),
+            "paraphrase:plain",
+            sd.payload(base)[0],
+            "s",
+            sd.payload(base)[1],
+            "Kindly: " + sd.payload(base)[1],
+            None,
+        ),
+    )
+    return parse_seeded({"scenarios": [item]}, load_catalog())[0]
