@@ -98,8 +98,31 @@ ROUND2_TRANSFORMS: tuple[tuple[int, str, str], ...] = (
 )
 
 
+# Round 3, only AC07, part-wise: rewriting the whole payload dropped AC07's concealment
+# instruction every time, so each sentence (the request, the concealment) is rewritten on its
+# own with the same transformation and the parts are joined. Same 20 transformations, ids
+# S21 to S40. A single bounded round; a class still short after it is recorded as such.
+ROUND3_BASES: tuple[str, ...] = ("AC07",)
+ROUND3_OFFSET = 20
+ROUND3_TRANSFORMS: tuple[tuple[int, str, str], ...] = tuple(
+    (index + ROUND3_OFFSET, transform, instruction)
+    for index, transform, instruction in TRANSFORMS + ROUND2_TRANSFORMS
+)
+_SENTENCE_BREAK = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+
 def transforms_for(base_id: str) -> tuple[tuple[int, str, str], ...]:
-    return TRANSFORMS + (ROUND2_TRANSFORMS if base_id in ROUND2_BASES else ())
+    out = TRANSFORMS + (ROUND2_TRANSFORMS if base_id in ROUND2_BASES else ())
+    return out + (ROUND3_TRANSFORMS if base_id in ROUND3_BASES else ())
+
+
+def part_wise(base_id: str, index: int) -> bool:
+    return base_id in ROUND3_BASES and index > ROUND3_OFFSET
+
+
+def split_parts(text: str) -> tuple[str, ...]:
+    """Sentences: a break after ., ! or ? followed by whitespace and a capital letter."""
+    return tuple(p for p in _SENTENCE_BREAK.split(text) if p)
 
 
 # Never used for seeding; kept for evasion testing so the two corpora never overlap.
@@ -204,12 +227,18 @@ class Candidate:
     text: str
     output: str
     rejected: str | None
+    parts: tuple[tuple[str, str, str], ...] = ()  # part-wise: (system, text, output) each
 
     @property
     def scenario_id(self) -> str:
         return f"{self.base}-S{self.index:02d}"
 
     def record(self) -> dict[str, Any]:
+        extra: dict[str, Any] = {}
+        if self.parts:
+            extra["parts"] = [
+                {"key": _key(s, t), "system": s, "text": t, "output": o} for s, t, o in self.parts
+            ]
         return {
             "key": _key(self.system, self.text),
             "scenario_id": self.scenario_id,
@@ -223,6 +252,7 @@ class Candidate:
             "output": self.output,
             "accepted": self.rejected is None,
             "rejected": self.rejected,
+            **extra,
         }
 
 
@@ -231,7 +261,13 @@ def load_cache(path: Path = CACHE_PATH) -> dict[str, str]:
     if not path.is_file():
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
-    return {r["key"]: r["output"] for r in data["records"]}
+    cache: dict[str, str] = {}
+    for record in data["records"]:
+        if "parts" in record:
+            cache.update({p["key"]: p["output"] for p in record["parts"]})
+        else:
+            cache[record["key"]] = record["output"]
+    return cache
 
 
 def generate(
@@ -246,6 +282,9 @@ def generate(
         field, text = payload(base)
         tokens = preserved_tokens(text)
         for index, transform, instruction in transforms_for(base.scenario_id):
+            if part_wise(base.scenario_id, index):
+                out.append(_part_wise(base, index, transform, instruction, provider, cache, params))
+                continue
             system = build_prompt(instruction, tokens)
             key = _key(system, text)
             if key not in cache:
@@ -267,6 +306,69 @@ def generate(
                 )
             )
     return out
+
+
+def _complete(
+    provider: LLMProvider | None,
+    cache: dict[str, str],
+    system: str,
+    text: str,
+    params: GenerationParams,
+    label: str,
+) -> str:
+    key = _key(system, text)
+    if key not in cache:
+        if provider is None:
+            raise SystemExit(f"{label}: not cached (offline)")
+        messages = [Message("system", system), Message("user", text)]
+        cache[key] = provider.complete(messages, params).text
+    return clean_output(cache[key])
+
+
+def _part_wise(
+    base: AttackScenario,
+    index: int,
+    transform: str,
+    instruction: str,
+    provider: LLMProvider | None,
+    cache: dict[str, str],
+    params: GenerationParams,
+) -> Candidate:
+    """Rewrite each sentence of the payload on its own and join the rewrites."""
+    field, text = payload(base)
+    parts: list[tuple[str, str, str]] = []
+    rejected: str | None = None
+    for n, part in enumerate(split_parts(text), start=1):
+        tokens = preserved_tokens(part)
+        system = build_prompt(instruction, tokens)
+        output = _complete(provider, cache, system, part, params, f"{base.scenario_id} {transform}")
+        parts.append((system, part, output))
+        problem = review(output, part, tokens)
+        # A short part may legitimately come back unchanged by a style; the whole must change.
+        if rejected is None and problem is not None and problem != "unchanged":
+            rejected = f"part {n}: {problem}"
+    joined = " ".join(o for _, _, o in parts)
+    if rejected is None:
+        rejected = review(joined, text, preserved_tokens(text))
+    return Candidate(
+        base.scenario_id,
+        index,
+        transform,
+        field,
+        "(part-wise)",
+        text,
+        joined,
+        rejected,
+        tuple(parts),
+    )
+
+
+class PendingReview(SystemExit):
+    """Variants passed the lexical check but have no meaning-review verdict yet."""
+
+    def __init__(self, ids: Sequence[str]) -> None:
+        super().__init__(f"variants without a review verdict: {list(ids)}")
+        self.ids = tuple(ids)
 
 
 def load_review(path: Path = REVIEW_PATH) -> dict[str, dict[str, Any]]:
@@ -300,7 +402,7 @@ def finalize(candidates: Sequence[Candidate], review: dict[str, dict[str, Any]])
                     c = dataclasses.replace(c, rejected=f"review: {verdict['reason']}")
         out.append(c)
     if unreviewed:
-        raise SystemExit(f"variants without a review verdict: {unreviewed}")
+        raise PendingReview(unreviewed)
     reviewable = set(first.values())
     stale = sorted(set(review) - reviewable)
     if stale:
@@ -340,16 +442,7 @@ def _dump(data: Any) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
-def write_outputs(
-    bases: Sequence[AttackScenario],
-    candidates: Iterable[Candidate],
-    cache_path: Path = CACHE_PATH,
-    seeded_path: Path = SEEDED_PATH,
-) -> tuple[int, int]:
-    by_id = {b.scenario_id: b for b in bases}
-    candidates = list(candidates)
-    records = [c.record() for c in candidates]
-    accepted = [variant(by_id[c.base], c) for c in candidates if c.rejected is None]
+def write_cache(candidates: Iterable[Candidate], cache_path: Path = CACHE_PATH) -> None:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(
         _dump(
@@ -359,12 +452,24 @@ def write_outputs(
                     "Every prompt sent to the local model for corpus seeding and its raw "
                     "output. Generation replays from this file; see attacks/seeding.py."
                 ),
-                "records": records,
+                "records": [c.record() for c in candidates],
             }
         ),
         encoding="utf-8",
         newline="\n",
     )
+
+
+def write_outputs(
+    bases: Sequence[AttackScenario],
+    candidates: Iterable[Candidate],
+    cache_path: Path = CACHE_PATH,
+    seeded_path: Path = SEEDED_PATH,
+) -> tuple[int, int]:
+    by_id = {b.scenario_id: b for b in bases}
+    candidates = list(candidates)
+    accepted = [variant(by_id[c.base], c) for c in candidates if c.rejected is None]
+    write_cache(candidates, cache_path)
     seeded_path.write_text(
         _dump(
             {
@@ -380,7 +485,7 @@ def write_outputs(
         encoding="utf-8",
         newline="\n",
     )
-    return len(accepted), len(records) - len(accepted)
+    return len(accepted), len(candidates) - len(accepted)
 
 
 def seed_bases(scenarios_path: Path | str = DEFAULT_SCENARIOS_PATH) -> list[AttackScenario]:
@@ -412,7 +517,18 @@ def main(argv: Sequence[str] | None = None) -> None:
 
         bases = seed_bases()
         provider = None if args.offline else OllamaLLMProvider(MODEL)
-        candidates = finalize(generate(bases, provider, load_cache()), load_review())
+        raw = generate(bases, provider, load_cache())
+        try:
+            candidates = finalize(raw, load_review())
+        except PendingReview as pending:
+            # Keep the new outputs for the review; the seeded catalog stays as it was.
+            write_cache(
+                dataclasses.replace(c, rejected="pending review")
+                if c.scenario_id in pending.ids
+                else c
+                for c in raw
+            )
+            raise
         kept, rejected = write_outputs(bases, candidates)
         sys.stdout.write(f"{kept} variants accepted, {rejected} rejected\n")
         return

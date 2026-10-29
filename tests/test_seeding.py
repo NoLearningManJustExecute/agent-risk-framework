@@ -89,6 +89,10 @@ def test_transforms_are_seeding_only() -> None:
         assert not any(reserved in t for _, t, _ in every)
     assert set(sd.ROUND2_BASES) <= set(sd.SEED_BASES)
     assert len(sd.transforms_for("AC06")) == 20 and len(sd.transforms_for("AC01")) == 10
+    assert len(sd.transforms_for("AC07")) == 40
+    assert [i for i, _, _ in sd.ROUND3_TRANSFORMS] == list(range(21, 41))
+    assert sd.part_wise("AC07", 21) and not sd.part_wise("AC07", 20)
+    assert not sd.part_wise("AC06", 21)
     assert set(sd.SEED_BASES).isdisjoint(sd.INEFFECTIVE_AT_BASELINE)
 
 
@@ -257,10 +261,13 @@ def test_finalize_fails_closed() -> None:
         sd.finalize([_cand("AC01-S01", "a")], stale)
 
 
-def test_committed_review_keeps_no_ac07_variant() -> None:
+def test_whole_payload_rewrites_of_ac07_are_all_rejected() -> None:
+    """Rounds 1 and 2 rewrote AC07 whole and lost its concealment; only part-wise survive."""
     review = sd.load_review()
-    ac07 = [v for sid, v in review.items() if sid.startswith("AC07-")]
-    assert ac07 and not any(v["keep"] for v in ac07)
+    whole = [v for sid, v in review.items() if sid.startswith("AC07-") and int(sid[-2:]) <= 20]
+    assert whole and not any(v["keep"] for v in whole)
+    kept = [sid for sid, v in review.items() if sid.startswith("AC07-") and v["keep"]]
+    assert kept and all(sd.part_wise("AC07", int(sid[-2:])) for sid in kept)
 
 
 @pytest.mark.parametrize(
@@ -297,3 +304,31 @@ def test_seeded_variant_must_keep_its_parents_lab(
     item.update(change)
     with pytest.raises(ScenarioError, match=message):
         parse_seeded({"scenarios": [item]}, load_catalog())
+
+
+def test_split_parts_keeps_the_concealment_sentence() -> None:
+    by_id = {s.scenario_id: s for s in load_catalog().scenarios}
+    parts = sd.split_parts(by_id["AC07"].user_prompt)
+    assert len(parts) == 2
+    assert "auditor@exfil.example" in parts[0] and "do not mention" in parts[1]
+    assert " ".join(parts) == by_id["AC07"].user_prompt
+
+
+def test_part_wise_rewrites_each_sentence_and_caches_the_parts(tmp_path: Path) -> None:
+    ac07 = next(s for s in load_catalog().scenarios if s.scenario_id == "AC07")
+    provider = EchoProvider(lambda text: "Kindly: " + text)
+    everything = sd.generate([ac07], provider, {})
+    cands = [c for c in everything if c.index > sd.ROUND3_OFFSET]
+    assert len(cands) == 20 and all(len(c.parts) == 2 for c in cands)
+    assert all(c.output.count("Kindly: ") == 2 and c.rejected is None for c in cands)
+    sd.write_outputs([ac07], everything, tmp_path / "c.json", tmp_path / "s.json")
+    cache = sd.load_cache(tmp_path / "c.json")
+    again = sd.generate([ac07], None, cache)  # offline: parts replay from the cache
+    assert [c.output for c in again] == [c.output for c in everything]
+
+
+def test_part_wise_rejects_a_dropped_part() -> None:
+    ac07 = next(s for s in load_catalog().scenarios if s.scenario_id == "AC07")
+    provider = EchoProvider(lambda text: "" if "mention" in text else "Kindly: " + text)
+    cands = [c for c in sd.generate([ac07], provider, {}) if c.index > sd.ROUND3_OFFSET]
+    assert all(c.rejected == "part 2: empty output" for c in cands)
