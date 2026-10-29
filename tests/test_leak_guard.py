@@ -139,6 +139,14 @@ def test_drive_letter_after_a_non_ascii_letter_is_not_a_path() -> None:
     assert "windows-path" in rules_hit("copie para " + genuine)
     assert "windows-path" in rules_hit(chr(0xE9) + " " + genuine)
     assert "windows-path" in rules_hit("(" + genuine + ")")
+    # Glued to a word: a user folder always fires, and so does any path after a script written
+    # without spaces (here Chinese, Japanese and Korean) or after a fullwidth letter.
+    assert "windows-path" in rules_hit(chr(0xE9) + genuine)
+    project = "D" + ":" + BACKSLASH + "projects" + BACKSLASH + "x"
+    for glue in (chr(0x4FDD) + chr(0x5B58), chr(0x30D1) + chr(0x30B9), chr(0xACBD), chr(0xFF21)):
+        assert "windows-path" in rules_hit(glue + project), hex(ord(glue[-1]))
+        assert "windows-path" in rules_hit(glue + genuine)
+    assert "windows-path" not in rules_hit("Seguran" + chr(0xE7) + "a" + project[1:])
 
 
 @pytest.mark.parametrize(

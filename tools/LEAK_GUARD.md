@@ -31,8 +31,7 @@ removes metadata chunks from PNG files in place, keeping image, color and animat
 These patterns contain nothing personal and live in the guard itself.
 
 - **Absolute paths.** Windows drive paths (a drive letter, a colon, then a slash or backslash,
-  not preceded by a letter of any script, so web addresses and translated words ending in a
-  colon do not match), UNC paths (plain and escaped), macOS
+  not preceded by a letter, so web addresses do not match), UNC paths (plain and escaped), macOS
   home directories, Git Bash and WSL user folders, Linux home directories (the CI runner's home
   directory is accepted only inside `.github/`, never with `..`), the Windows user profile
   variable, and a tilde followed by a folder.
@@ -41,6 +40,10 @@ These patterns contain nothing personal and live in the guard itself.
   - In test fixtures and docs (any path with a `tests`, `test`, `docs` or `fixtures` folder), a
     one-segment probe such as a drive plus one name does not fire. Longer paths still do.
   - A path that climbs with `..` or passes through a user folder anywhere always fires.
+  - A drive letter right after a non-ASCII letter of a script that puts spaces between words
+    ends a word (a translated word, a colon, then an escaped newline) and does not fire.
+    After Chinese, Japanese, Korean, Thai and similar scripts, which write without spaces,
+    and after fullwidth letters, it still fires.
 - **Email addresses**, except the GitHub noreply domains, `noreply` and `support` at github.com,
   the reserved example.com, example.net and example.org domains and their subdomains, and domains
   ending in `.example`, `.test` or `.invalid`.
