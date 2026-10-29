@@ -264,6 +264,69 @@ def test_denylist_sources(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     assert (code, "from private planning file" in output) == (1, True)
 
 
+def test_planning_file_is_found_in_any_folder_above_the_clone(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clone = tmp_path / "work" / "clones" / "repo"
+    clone.mkdir(parents=True)
+    sample = clone / "a.txt"
+    sample.write_text(SECRET_WORD + "\n", encoding="utf-8")
+    args = ["--root", str(clone), "--text", str(sample)]
+    code, _ = run_guard(args, {}, capsys)
+    assert code == 0
+
+    planning = tmp_path / "_planning"
+    planning.mkdir()
+    (planning / "private-denylist.hashes").write_text(DENYLIST_TEXT, encoding="utf-8")
+    code, output = run_guard(args, {}, capsys)
+    assert (code, "from private planning file" in output) == (1, True)
+
+    (clone / "_planning").mkdir()
+    (clone / "_planning" / "private-denylist.hashes").write_text("salt 00\n", encoding="utf-8")
+    code, output = run_guard(args, {}, capsys)
+    assert code == 1, "a list inside the clone itself is never used"
+
+
+def test_git_config_names_the_denylist(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    sample = repo / "a.txt"
+    sample.write_text(SECRET_WORD + "\n", encoding="utf-8")
+    args = ["--root", str(repo), "--text", str(sample)]
+    elsewhere = tmp_path / "keep" / "list.hashes"
+    elsewhere.parent.mkdir()
+    elsewhere.write_text(DENYLIST_TEXT, encoding="utf-8")
+
+    git(repo, "config", "leakguard.denylist", str(elsewhere))
+    code, output = run_guard(args, {}, capsys)
+    assert (code, "from git config leakguard.denylist" in output) == (1, True)
+
+    git(repo, "config", "leakguard.denylist", "../keep/list.hashes")
+    code, output = run_guard(args, {}, capsys)
+    assert (code, "from git config leakguard.denylist" in output) == (1, True)
+
+    named = tmp_path / "named.hashes"
+    named.write_text(DENYLIST_TEXT, encoding="utf-8")
+    code, output = run_guard(args, {"LEAK_DENYLIST_FILE": str(named)}, capsys)
+    assert "from LEAK_DENYLIST_FILE" in output
+
+    git(repo, "config", "leakguard.denylist", str(tmp_path / "gone.hashes"))
+    code, output = run_guard(args, {}, capsys)
+    assert code == 2
+    assert "git config leakguard.denylist does not name a readable file" in output
+    assert "gone" not in output
+
+
+def test_no_git_means_no_configured_denylist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def missing(*args: Any, **kwargs: Any) -> Any:
+        raise OSError("git not installed")
+
+    monkeypatch.setattr(subprocess, "run", missing)
+    assert leak_guard.configured_denylist(tmp_path) == ""
+
+
 def test_missing_denylist_warns_locally_and_fails_in_ci(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -273,6 +336,7 @@ def test_missing_denylist_warns_locally_and_fails_in_ci(
     code, output = run_guard(args, {}, capsys)
     assert code == 0
     assert "WARNING: no private denylist" in output
+    assert "git config leakguard.denylist <path to the list>" in output
     code, output = run_guard(args, {"CI": "true"}, capsys)
     assert code == 2
     assert "a denylist is required in CI" in output

@@ -82,10 +82,21 @@ The hash of an identifier is the SHA-256 of the salt, a newline, and the identif
 lowercased. Lines starting with `#` are comments. Personal email addresses are never stored,
 even as hashes: the generic email rule blocks every address outside the allowlisted domains.
 
-The guard loads the list from, in order: the file named by `LEAK_DENYLIST_FILE`, the text of
-`LEAK_DENYLIST`, or a private file kept outside the repository next to it. In CI the list comes
-from the `LEAK_DENYLIST` repository secret. With no list, the guard prints a warning and exits
-`2` when `CI=true`, or continues with generic rules only when run locally.
+The guard loads the list from the first of these that is set:
+
+1. the file named by `LEAK_DENYLIST_FILE`;
+2. the text of `LEAK_DENYLIST`;
+3. the file named by the clone's own git setting `leakguard.denylist` (an absolute path, or one
+   relative to the repository root), set once per clone with
+   `git config leakguard.denylist <path to the list>`;
+4. `_planning/private-denylist.hashes` in the nearest folder above the repository that has one.
+   A list inside the repository itself is never used.
+
+A named file (1 or 3) that does not exist is a setup error, never a silent skip. The hooks use
+the same lookup, so a clone in the usual layout, or one with the git setting, checks private
+identifiers on every commit and push. In CI the list comes from the `LEAK_DENYLIST` repository
+secret. With no list, the guard prints a boxed warning that says where it looked and how to fix
+it, then exits `2` when `CI=true`, or continues with generic rules only when run locally.
 
 ## Allowlist
 
