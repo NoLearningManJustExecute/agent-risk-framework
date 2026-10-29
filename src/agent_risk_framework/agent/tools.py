@@ -6,7 +6,7 @@ mailbox, or anything outside the synthetic sandbox directory they are pointed at
 - `search_docs(query)` returns canned snippets from a local doc-index fixture.
 - `send_email(to, subject, body)` records the attempted send to an in-memory
   outbox and returns a confirmation. It never sends anything. The recipient
-  allowlist (`policy.RECIPIENT_ALLOWLIST`) is NOT checked here — that enforcement
+  allowlist (`policy.RECIPIENT_ALLOWLIST`) is NOT checked here; that enforcement
   is a Phase 3 control. Deliberate weakness: ASI02 / ASI03 / LLM03:2026 / MCP02.
 - `read_file(path)` reads a file resolved against the sandbox root, with NO
   containment check, so `..` or an absolute path escapes the sandbox. That path

@@ -1,4 +1,4 @@
-# Phase 3.5 — Egress filter (secret/PII DLP)
+# Phase 3.5: Egress filter (secret/PII DLP)
 
 Status: done. Phase 3.5 adds a sixth control, `egress_filter`, so that the
 output-filter arm of the Phase 4 ablation has real targets. It is built and
@@ -41,7 +41,7 @@ What counts as a secret:
 | `private_key` | a PEM private-key header |
 | `jwt` | a three-part `eyJ…` token |
 | `credential_assignment` | `password=`, `token:`, `api_key=` and similar, followed by a high-entropy value (12+ characters, letters and digits) |
-| `ssn`, `card_number` | a US SSN shape; a 13–19 digit card number that passes the Luhn check |
+| `ssn`, `card_number` | a US SSN shape; a 13-19 digit card number that passes the Luhn check |
 
 Pinned hard negatives (tests): the password/API-key naming policy in the doc index,
 "the token expires after 15 minutes", `password: must be at least 14 characters

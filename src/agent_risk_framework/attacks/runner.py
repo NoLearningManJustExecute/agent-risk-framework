@@ -9,8 +9,8 @@ at `seed + run_index` and the experiment's temperature, then:
    to the SQLite run log.
 
 Benign tasks run through the same lab and loop with no planted content, and get
-two verdicts — `task_success` (the run's `outcome`) and `benign_input_violation`
-(a separate verdict row) — which are reported side by side and never combined.
+two verdicts, `task_success` (the run's `outcome`) and `benign_input_violation`
+(a separate verdict row), which are reported side by side and never combined.
 
 With no guardrails (`config: baseline`) this is the undefended Phase 2 baseline:
 `detector_result` is `not_evaluated` and `guardrail_action` is `none` on every row,

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 834 312" width="834" height="312" role="img" aria-labelledby="t d" font-family="system-ui, -apple-system, Segoe UI, sans-serif">
-<title id='t'>Phase 4 ablation: attack success against false positives and task success, per arm</title>
-<desc id='d'>Attack success fell from 160/240 (67%) at baseline to 0/240 (0%) with all six controls, at a false-positive rate of 75/450 (17%) on the benign set (40/450 (9%) benign runs lost to a control), with task success 410/450 (91%) at baseline and 365/450 (81%) combined.</desc>
+<title id='t'>Phase 4 ablation: attack success against true false positives and task success, per arm</title>
+<desc id='d'>`tool_permissions` alone cut attack success by 46 points (67% to 21%) with 0/450 (0%) true false positives (10/450 (2%) benign runs with any block) and 0 points of lost task success; `input_classifier` alone cut attack success by 21 points (67% to 46%) with 40/450 (9%) true false positives (40/450 (9%) benign runs with any block) and 9 points of lost task success. All six together: attack success 0/240 (0%), of which 21 runs were `did_not_execute` (the model wrote the call as text; no control credit) and 8 of 24 scenarios never succeeded at baseline; task success 410/450 (91%) to 365/450 (81%), with 40/450 (9%) benign runs lost to a control.</desc>
 <style>
 svg{--bg:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e4e3df;--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a}
 @media (prefers-color-scheme: dark){svg{--bg:#1a1a19;--ink:#f0efec;--ink2:#c3c2b7;--grid:#3a3a37;--s1:#3987e5;--s2:#d95926;--s3:#199e70}}
@@ -30,25 +30,23 @@ svg{--bg:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e4e3df;--s1:#2a78d6;--s2:#
 <path d="M132,226.0 h99.8 a4,4 0 0 1 4,4 v6 a4,4 0 0 1 -4,4 h-99.8 z" fill="var(--s1)"><title>egress_filter: Attack success 150/240 (62%)</title></path>
 <text class="t" x="240.8" y="237.0">62%<title>egress_filter: Attack success 150/240 (62%)</title></text>
 <text class="t" x="137.0" y="263.0">0%<title>combined: Attack success 0/240 (0%)</title></text>
-<text class="t" x="370" y="42" font-weight="600">False-positive rate (any block)</text>
+<text class="t" x="370" y="42" font-weight="600">True false positives (task lost)</text>
 <line x1="370.0" y1="54" x2="370.0" y2="272" stroke="var(--grid)" stroke-width="1"/>
 <text class="m" x="370.0" y="286" text-anchor="middle">0%</text>
 <line x1="453.0" y1="54" x2="453.0" y2="272" stroke="var(--grid)" stroke-width="1"/>
 <text class="m" x="453.0" y="286" text-anchor="middle">50%</text>
 <line x1="536.0" y1="54" x2="536.0" y2="272" stroke="var(--grid)" stroke-width="1"/>
 <text class="m" x="536.0" y="286" text-anchor="middle">100%</text>
-<text class="t" x="375.0" y="81.0">0%<title>baseline: False-positive rate (any block) 0/450 (0%)</title></text>
-<path d="M370,96.0 h1.8 a1.8444444444444446,1.8444444444444446 0 0 1 1.8444444444444446,1.8444444444444446 v10.31111111111111 a1.8444444444444446,1.8444444444444446 0 0 1 -1.8444444444444446,1.8444444444444446 h-1.8 z" fill="var(--s2)"><title>tool_permissions: False-positive rate (any block) 10/450 (2%)</title></path>
-<text class="t" x="378.7" y="107.0">2%<title>tool_permissions: False-positive rate (any block) 10/450 (2%)</title></text>
-<text class="t" x="375.0" y="133.0">0%<title>tool_integrity: False-positive rate (any block) 0/450 (0%)</title></text>
-<path d="M370,148.0 h10.4 a4,4 0 0 1 4,4 v6 a4,4 0 0 1 -4,4 h-10.4 z" fill="var(--s2)"><title>approval_gate: False-positive rate (any block) 39/450 (9%)</title></path>
-<text class="t" x="389.4" y="159.0">9%<title>approval_gate: False-positive rate (any block) 39/450 (9%)</title></text>
-<path d="M370,174.0 h10.8 a4,4 0 0 1 4,4 v6 a4,4 0 0 1 -4,4 h-10.8 z" fill="var(--s2)"><title>input_classifier: False-positive rate (any block) 40/450 (9%)</title></path>
-<text class="t" x="389.8" y="185.0">9%<title>input_classifier: False-positive rate (any block) 40/450 (9%)</title></text>
-<text class="t" x="375.0" y="211.0">0%<title>output_classifier: False-positive rate (any block) 0/450 (0%)</title></text>
-<text class="t" x="375.0" y="237.0">0%<title>egress_filter: False-positive rate (any block) 0/450 (0%)</title></text>
-<path d="M370,252.0 h23.7 a4,4 0 0 1 4,4 v6 a4,4 0 0 1 -4,4 h-23.7 z" fill="var(--s2)"><title>combined: False-positive rate (any block) 75/450 (17%)</title></path>
-<text class="t" x="402.7" y="263.0">17%<title>combined: False-positive rate (any block) 75/450 (17%)</title></text>
+<text class="t" x="375.0" y="81.0">0%<title>baseline: True false positives (task lost) 0/450 (0%)</title></text>
+<text class="t" x="375.0" y="107.0">0%<title>tool_permissions: True false positives (task lost) 0/450 (0%)</title></text>
+<text class="t" x="375.0" y="133.0">0%<title>tool_integrity: True false positives (task lost) 0/450 (0%)</title></text>
+<text class="t" x="375.0" y="159.0">0%<title>approval_gate: True false positives (task lost) 0/450 (0%)</title></text>
+<path d="M370,174.0 h10.8 a4,4 0 0 1 4,4 v6 a4,4 0 0 1 -4,4 h-10.8 z" fill="var(--s2)"><title>input_classifier: True false positives (task lost) 40/450 (9%)</title></path>
+<text class="t" x="389.8" y="185.0">9%<title>input_classifier: True false positives (task lost) 40/450 (9%)</title></text>
+<text class="t" x="375.0" y="211.0">0%<title>output_classifier: True false positives (task lost) 0/450 (0%)</title></text>
+<text class="t" x="375.0" y="237.0">0%<title>egress_filter: True false positives (task lost) 0/450 (0%)</title></text>
+<path d="M370,252.0 h10.8 a4,4 0 0 1 4,4 v6 a4,4 0 0 1 -4,4 h-10.8 z" fill="var(--s2)"><title>combined: True false positives (task lost) 40/450 (9%)</title></path>
+<text class="t" x="389.8" y="263.0">9%<title>combined: True false positives (task lost) 40/450 (9%)</title></text>
 <text class="t" x="608" y="42" font-weight="600">Benign task success</text>
 <line x1="608.0" y1="54" x2="608.0" y2="272" stroke="var(--grid)" stroke-width="1"/>
 <text class="m" x="608.0" y="286" text-anchor="middle">0%</text>

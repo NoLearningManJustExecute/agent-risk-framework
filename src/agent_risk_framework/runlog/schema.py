@@ -2,27 +2,27 @@
 
 Three grains:
 
-- `runs`     — one row per attack or benign run (the ablation grain from Phase 0).
-- `steps`    — one row per agent step within a run (Phase 1): the model turn plus the
-               tool call it dispatched, with raw arguments and the tool result. A step
-               that produced no tool call (the agent's final answer) has a NULL
-               `tool_name` and records `model_text` only.
-- `verdicts` — one row per deterministic oracle evaluated on a run (Phase 2): the
-               oracle name, whether it fired, and the reasons it gives. A run's
-               `outcome` is derived from its primary oracle; secondary oracles (the
-               benign-input violation check, tool-definition drift) live here only.
+- `runs`: one row per attack or benign run (the ablation grain from Phase 0).
+- `steps`: one row per agent step within a run (Phase 1): the model turn plus the
+  tool call it dispatched, with raw arguments and the tool result. A step
+  that produced no tool call (the agent's final answer) has a NULL
+  `tool_name` and records `model_text` only.
+- `verdicts`: one row per deterministic oracle evaluated on a run (Phase 2): the
+  oracle name, whether it fired, and the reasons it gives. A run's
+  `outcome` is derived from its primary oracle; secondary oracles (the
+  benign-input violation check, tool-definition drift) live here only.
 
 Phase 3 adds the guardrail grains:
 
-- `decisions`    — the decision log: one row per guardrail evaluation (Phase 3): which
-                   control, at which stage, on which input (`target`, plus the step
-                   and call it belongs to), allow or block, and why. Allows are logged
-                   too, so a control's false-positive cost can be read off the log.
-- `attributions` — one row per completed run: its outcome bucket (`succeeded`,
-                   `blocked_by_control`, `did_not_execute`, `failed_other`), which
-                   control(s) get the credit, and on what basis.
-- `run_controls` — the exact set of guardrails switched on for the run. `runs.config`
-                   is the experiment's label; this is the ground truth Phase 4 keys on.
+- `decisions`: the decision log: one row per guardrail evaluation (Phase 3): which
+  control, at which stage, on which input (`target`, plus the step
+  and call it belongs to), allow or block, and why. Allows are logged
+  too, so a control's false-positive cost can be read off the log.
+- `attributions`: one row per completed run: its outcome bucket (`succeeded`,
+  `blocked_by_control`, `did_not_execute`, `failed_other`), which
+  control(s) get the credit, and on what basis.
+- `run_controls`: the exact set of guardrails switched on for the run. `runs.config`
+  is the experiment's label; this is the ground truth Phase 4 keys on.
 
 Schema v2 adds `steps`, v3 adds `verdicts`, v4 adds `decisions`, `attributions` and
 `run_controls`; older databases upgrade in place because the DDL is idempotent
