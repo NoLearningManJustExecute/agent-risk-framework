@@ -25,8 +25,15 @@ is `adg.*`. Provenance (trust, data labels, content references) is described in
 `provenance.py` and docs/gauntlet_export.md.
 
 The run log stores model latencies, not a wall-clock time per event, so timestamps are
-reconstructed: the run starts at its recorded end minus its total model latency, each
-step advances by its model latency, and events within a step are one microsecond apart.
+reconstructed: every trace starts at the same fixed epoch (`EPOCH`), each step advances
+by its model latency, and events within a step are one microsecond apart. Real start
+times are dropped on purpose: the lab runs every attack before any benign task, so wall
+time alone would separate the labels. For the same reason files list traces in trace-id
+order, not run order.
+
+`tool.result` carries what the tool returned, as the run log stores it. When a guardrail
+withheld or redacted the result, the model saw less; the `guardrail.action` that follows
+says so.
 
 Every exported file is scanned with the leak guard (`tools/leak_guard.py --text`); any
 hit, or a missing guard, aborts the export and removes what was written.
@@ -84,6 +91,9 @@ DEFAULT_SCENARIOS = Path("data/attack_scenarios.json")
 DEFAULT_BENIGN = Path("data/benign_tasks.json")
 DEFAULT_LEAK_GUARD = Path("tools/leak_guard.py")
 TICK = timedelta(microseconds=1)
+# Every trace starts here. Real start times would leak the label: the lab runs all attack
+# cases before the benign tasks, so wall-clock time alone separates them.
+EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
 
 # Decision stage in the run log -> adg.guardrail.stage.
 _STAGES = {
@@ -124,15 +134,9 @@ def condition(run: RunRecord, controls: frozenset[str]) -> str:
     return str(run.config)
 
 
-def _utc(stamp: str) -> datetime:
-    value = datetime.fromisoformat(stamp)
-    if value.tzinfo is None:
-        raise ExportError("run log timestamps must carry a UTC offset")
-    return value.astimezone(UTC)
-
-
 def _stamp(value: datetime) -> str:
-    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    # Fixed width (always six fraction digits), so string order is time order.
+    return value.astimezone(UTC).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 def _args_text(raw: str | None) -> tuple[Any, str]:
@@ -289,9 +293,9 @@ def _result_source(call: StepRecord, untrusted_tools: set[str]) -> tuple[str, tu
         path = args.get("path") if isinstance(args, dict) else None
         if not isinstance(path, str):
             return TRUSTED, ()
-        source = classify_path(path)
-        if call.tool_result is not None and call.tool_result.startswith("No file at"):
+        if call.tool_result == f"No file at {path!r}.":
             return TRUSTED, ()  # the harness's own message, no file content
+        source = classify_path(path)
         return source.trust, source.labels
     if call.tool_name == "search_docs":
         return SEARCH_SOURCE
@@ -314,9 +318,8 @@ def build_trace(
         raise ExportError("run without an id")
     steps = list(log.steps(run.run_id))
     decisions = list(log.decisions(run.run_id))
-    end = _utc(run.created_at)
     trace = trace_id(run)
-    b = _Builder(trace, end - timedelta(milliseconds=run.latency_ms), redactor)
+    b = _Builder(trace, EPOCH, redactor)
     model = {"gen_ai.request.model": run.model, "gen_ai.provider.name": PROVIDER}
 
     start_attrs: dict[str, Any] = {
@@ -538,42 +541,64 @@ def export(
     ks: Sequence[int] = (DEFAULT_K,),
     redactor: Callable[[str], str] | None = None,
 ) -> ExportSummary:
-    """Write `<out>/k<K>/traces/<experiment>.jsonl` per K and one `<out>/labels.jsonl`."""
+    """Write `<out>/k<K>/traces/<experiment>.jsonl` per K and one `<out>/labels.jsonl`.
+
+    Traces and labels are written in trace-id order, never run-log order: the lab runs
+    attacks before benign tasks, so file position would give the label away.
+    """
     if redactor is None:
         identifiers = host_identifiers()
 
         def redactor(text: str) -> str:
             return redact(text, identifiers)
 
-    files: list[Path] = []
-    handles: dict[tuple[int, str], Any] = {}
+    traces: dict[tuple[int, str], dict[str, list[dict[str, Any]]]] = {}
+    labels: dict[str, dict[str, Any]] = {}
+    skipped = 0
+    for run in selected_runs(log, experiments):
+        if run.outcome == Outcome.ERROR or run.run_id is None:
+            skipped += 1
+            continue
+        controls = frozenset(str(c) for c in (log.controls(run.run_id) or ()))
+        for k, lines in build_trace(log, run, catalog, ks=ks, redactor=redactor).items():
+            traces.setdefault((k, run.experiment_id), {})[trace_id(run)] = lines
+        labels[trace_id(run)] = label(run, controls)
+
     out.mkdir(parents=True, exist_ok=True)
-    labels_path = out / "labels.jsonl"
-    count = skipped = 0
-    try:
-        with open(labels_path, "w", encoding="utf-8", newline="\n") as labels_fh:
-            files.append(labels_path)
-            for run in selected_runs(log, experiments):
-                if run.outcome == Outcome.ERROR or run.run_id is None:
-                    skipped += 1
-                    continue
-                controls = frozenset(str(c) for c in (log.controls(run.run_id) or ()))
-                versions = build_trace(log, run, catalog, ks=ks, redactor=redactor)
-                for k, lines in versions.items():
-                    key = (k, run.experiment_id)
-                    if key not in handles:
-                        path = out / f"k{k}" / "traces" / f"{run.experiment_id}.jsonl"
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        handles[key] = open(path, "w", encoding="utf-8", newline="\n")  # noqa: SIM115
-                        files.append(path)
-                    for line in lines:
-                        handles[key].write(_dump(line) + "\n")
-                labels_fh.write(_dump(label(run, controls)) + "\n")
-                count += 1
-    finally:
-        for fh in handles.values():
-            fh.close()
-    return ExportSummary(count, skipped, tuple(files))
+    files = [out / "labels.jsonl"]
+    _write_lines(files[0], (labels[t] for t in sorted(labels)))
+    for (k, experiment), by_trace in sorted(traces.items()):
+        path = out / f"k{k}" / "traces" / f"{experiment}.jsonl"
+        _write_lines(path, (line for t in sorted(by_trace) for line in by_trace[t]))
+        files.append(path)
+    return ExportSummary(len(labels), skipped, tuple(files))
+
+
+def _write_lines(path: Path, records: Iterable[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        for record in records:
+            fh.write(_dump(record) + "\n")
+
+
+EXPORT_ENTRIES = frozenset({"export_manifest.json", "labels.jsonl"})
+
+
+def _is_previous_export(path: Path) -> bool:
+    """Only the exporter's own layout: the manifest, labels, and k<N>/traces/*.jsonl."""
+    if not (path / "export_manifest.json").is_file():
+        return False
+    for entry in path.iterdir():
+        if entry.name in EXPORT_ENTRIES and entry.is_file():
+            continue
+        if not (entry.is_dir() and entry.name[:1] == "k" and entry.name[1:].isdigit()):
+            return False
+        inner = list(entry.iterdir())
+        if [i.name for i in inner] != ["traces"] or not inner[0].is_dir():
+            return False
+        if any(f.suffix != ".jsonl" or not f.is_file() for f in inner[0].iterdir()):
+            return False
+    return True
 
 
 def leak_guard(files: Sequence[Path], guard: Path = DEFAULT_LEAK_GUARD) -> None:
@@ -654,18 +679,20 @@ def main(argv: list[str] | None = None) -> None:
         parser.error(f"no run log named {db.name}")
     ks = sorted(set(args.k or [DEFAULT_K]))
     out = Path(args.out)
-    if out.exists():
-        # Only a previous export is replaced; any other directory is left alone.
-        if any(out.iterdir()) and not (out / "export_manifest.json").is_file():
-            parser.error("--out exists and is not a previous export; choose an empty directory")
-        shutil.rmtree(out)
+    # Only an empty directory or a previous export (exactly the exporter's layout) is
+    # replaced, and only after the new export has passed the leak guard.
+    if out.exists() and any(out.iterdir()) and not _is_previous_export(out):
+        parser.error("--out exists and is not a previous export; choose an empty directory")
+    staging = out.with_name(out.name + ".partial")
+    if staging.exists():
+        parser.error(f"{staging.name} exists from an interrupted export; remove it first")
     catalog = Catalog.load(args.scenarios, args.benign, args.registry)
     try:
         with RunLog(db) as log:
-            summary = export(log, out, args.experiment, catalog, ks=ks)
+            summary = export(log, staging, args.experiment, catalog, ks=ks)
             models = {r.model for e in args.experiment for r in log.runs(e)}
         manifest = write_manifest(
-            out,
+            staging,
             summary,
             db=db,
             experiments=args.experiment,
@@ -674,9 +701,13 @@ def main(argv: list[str] | None = None) -> None:
             model_digest=args.model_digest,
         )
         leak_guard([*summary.files, manifest], Path(args.leak_guard))
-    except Exception:
-        shutil.rmtree(out, ignore_errors=True)
+    except BaseException:
+        # Anything the leak guard did not pass is removed, interrupts included.
+        shutil.rmtree(staging, ignore_errors=True)
         raise
+    if out.exists():
+        shutil.rmtree(out)
+    staging.rename(out)
     sys.stderr.write(
         f"{summary.runs} runs exported ({summary.skipped_errors} error runs skipped), "
         f"{len(summary.files) + 1} files, leak guard clean\n"

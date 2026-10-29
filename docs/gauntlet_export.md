@@ -19,7 +19,13 @@ Output:
 | `export_manifest.json` | Source commit, run log file name, experiments, model and digest, K values, counts, sha256 of every file |
 
 Runs whose outcome is `error` did not complete and are skipped; the manifest counts them.
-`--out` must be empty or a previous export, which is replaced. The gauntlet is not a runtime
+`--out` must be empty or a previous export (exactly the manifest, labels and `k<K>/traces/`
+files). The export is written to `<out>.partial` first and replaces `--out` only after the leak
+guard passes; on any failure or interrupt the partial output is deleted and a previous export
+stays as it was.
+
+Paths are matched ignoring case, as on the lab's Windows file system, and resolved the way the
+lab resolves them: `../workspace/inbox/x.eml` is back inside the workspace and is an inbox read. The gauntlet is not a runtime
 dependency: the tests validate the output against copies of its JSON Schemas in
 `tests/fixtures/gauntlet_schemas/`.
 
@@ -46,8 +52,15 @@ Ground truth stays out of traces. The trace id is a hash of the run's identity, 
 arm, outcome and oracle verdicts appear only in `labels.jsonl`.
 
 Timestamps are reconstructed. The run log keeps each model turn's latency, not a time per
-event, so a run starts at its recorded end minus its total model latency, each step advances by
-its model latency, and events within a step are one microsecond apart.
+event, so every trace starts at one fixed epoch (2026-01-01T00:00:00Z), each step advances by
+its model latency, and events within a step are one microsecond apart. Real start times are
+dropped on purpose: the lab runs every attack case before any benign task, so wall-clock time,
+or the order runs appear in the log, would give the label away. Files therefore list traces in
+trace-id order, and labels in the same order.
+
+`tool.result` content is what the tool returned, as the run log stores it. When a guardrail
+withheld or redacted a result the model saw less; the `guardrail.action` after the result
+records that, and content references can point at text the model never read.
 
 ## Labels
 
@@ -84,7 +97,7 @@ never from whether the run is an attack.
 | `read_file` inside the workspace, any other folder | unknown | internal | No rule; fail toward unknown |
 | `read_file` outside the workspace, `restricted/hr/` | unknown | pii | Planted HR record, not reviewed |
 | `read_file` outside the workspace, anything else, or an absolute path | unknown | content only | Not reviewed |
-| `read_file` that found nothing ("No file at ...") | trusted | content only | The harness's own message |
+| `read_file` that found nothing (exactly the harness's "No file at '<path>'." message) | trusted | content only | The harness's own message |
 | `search_docs` results | trusted | internal | The workspace's own document index |
 | `send_email` and other results | trusted | content only | The harness's own confirmation |
 

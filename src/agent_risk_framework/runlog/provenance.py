@@ -107,25 +107,36 @@ class FileSource:
 def classify_path(raw: str) -> FileSource:
     """Map a read_file argument to its sandbox folder, trust and labels.
 
-    Mirrors the lab's resolution: relative to the workspace root, `..` climbs out.
-    An absolute path never resolves inside the workspace (the lab reports it missing).
+    Mirrors the lab's resolution: relative to `<lab>/workspace`, `..` climbs out, and a
+    path that climbs back in (`../workspace/inbox/x.eml`) lands inside again. Matching
+    ignores case, as the lab's Windows file system does. An absolute path never resolves
+    inside the workspace (the lab reports it missing).
     """
     norm = raw.replace("\\", "/").strip()
     if norm.startswith("/") or re.match(r"^[A-Za-z]:", norm):
         return FileSource("<absolute>", False, *OUTSIDE_DEFAULT)
-    joined = posixpath.normpath(norm) if norm else "."
-    if joined == ".." or joined.startswith("../"):
-        rel = joined
-        while rel.startswith("../"):
-            rel = rel[3:]
-        for prefix, trust, labels in OUTSIDE_RULES:
-            if rel.startswith(prefix):
-                return FileSource(joined, False, trust, labels)
-        return FileSource(joined, False, *OUTSIDE_DEFAULT)
-    for prefix, trust, labels in FOLDER_RULES:
-        if joined == prefix or joined.startswith(prefix):
-            return FileSource(joined, True, trust, labels)
-    return FileSource(joined, True, *WORKSPACE_DEFAULT)
+    full = posixpath.normpath(f"/lab/workspace/{norm}")
+    if full == "/lab/workspace" or full.startswith("/lab/workspace/"):
+        rel = full.removeprefix("/lab/workspace").lstrip("/") or "."
+        return FileSource(rel, True, *_match(rel, FOLDER_RULES, WORKSPACE_DEFAULT))
+    if full.startswith("/lab/"):
+        rel = full.removeprefix("/lab/")
+        return FileSource(f"../{rel}", False, *_match(rel, OUTSIDE_RULES, OUTSIDE_DEFAULT))
+    return FileSource("<outside lab>", False, *OUTSIDE_DEFAULT)
+
+
+def _match(
+    rel: str,
+    rules: tuple[tuple[str, str, tuple[str, ...]], ...],
+    default: tuple[str, tuple[str, ...]],
+) -> tuple[str, tuple[str, ...]]:
+    """A rule ending in `/` names a folder (prefix match); any other rule names one file."""
+    key = rel.casefold()
+    for name, trust, labels in rules:
+        rule = name.casefold()
+        if key == rule or (rule.endswith("/") and key.startswith(rule)):
+            return trust, labels
+    return default
 
 
 def normalize(text: str) -> str:
