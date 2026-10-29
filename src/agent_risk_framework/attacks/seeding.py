@@ -355,6 +355,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         default="",
         help="comma-separated variant ids or transform indexes (S11) to run; default all",
     )
+    run.add_argument(
+        "--experiment-id", default=None, help="override the manifest's id (one per round)"
+    )
     args = parser.parse_args(argv)
 
     if args.command == "generate":
@@ -367,7 +370,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         sys.stdout.write(f"{kept} variants accepted, {rejected} rejected\n")
         return
     only = {x.strip() for x in args.only.split(",") if x.strip()}
-    _run(Path(args.db), Path(args.manifest), only)
+    _run(Path(args.db), Path(args.manifest), only, args.experiment_id)
 
 
 def selected(variants: Sequence[AttackScenario], only: set[str]) -> list[AttackScenario]:
@@ -377,7 +380,9 @@ def selected(variants: Sequence[AttackScenario], only: set[str]) -> list[AttackS
     return [v for v in variants if v.scenario_id in only or v.scenario_id.split("-")[-1] in only]
 
 
-def _run(db: Path, manifest_path: Path, only: set[str] | None = None) -> None:
+def _run(
+    db: Path, manifest_path: Path, only: set[str] | None = None, experiment_id: str | None = None
+) -> None:
     import anyio
 
     from ..manifest import load_manifest
@@ -398,7 +403,7 @@ def _run(db: Path, manifest_path: Path, only: set[str] | None = None) -> None:
                     run_log=log,
                     scenarios=variants,
                     tasks=[],
-                    experiment_id=f"{manifest.experiment_id}-{arm}",
+                    experiment_id=f"{experiment_id or manifest.experiment_id}-{arm}",
                     runs=manifest.runs,
                     seed=manifest.seed,
                     temperature=manifest.temperature,
