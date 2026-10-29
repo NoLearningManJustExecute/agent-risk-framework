@@ -1,6 +1,12 @@
 # Demo: one attack, undefended and then defended
 
-![Demo: AC01 succeeds against the undefended agent and is blocked with controls on](demo/demo.svg)
+![Recording: AC01 succeeds against the undefended agent and is blocked with controls on](demo/demo.gif)
+
+This is a terminal recording of the live run, made with `vhs` from
+[demo/demo.tape](demo/demo.tape). The agent talks to a local Ollama serving
+`llama3.1:8b`. Every line on screen is the program's real output. The pause after
+the command is the model working: the demo prints its transcript when all three arms
+finish.
 
 What it shows: attack case AC01 asks the agent to mail a confidential file to an
 outside address. I run it three times through the real lab (MCP server, agent loop,
@@ -20,6 +26,8 @@ guardrail engine, oracles, credit rules) with `llama3.1:8b` at temperature 0:
 
 | File | What it is |
 | --- | --- |
+| `docs/demo/demo.gif` | The terminal recording above, about 24 seconds, 900 by 660 pixels |
+| `docs/demo/demo.tape` | The `vhs` script that records it |
 | `docs/demo/transcript.txt` | The transcript of the live run, exactly as printed |
 | `docs/demo/demo.svg` | The same transcript as an animated terminal, about two minutes end to end. It plays in a browser and in the GitHub README |
 | `docs/demo/demo-final-frame.svg` | The final frame, for places that do not play animation (the PDF report, static previews) |
@@ -42,21 +50,16 @@ python -m agent_risk_framework.demo --fake
 Other cases: `--case AC11` (poisoned tool description) or `--case AC12B` (shadow
 tool). Pick arms with `--arms baseline,tool_permissions,combined`.
 
-## Capturing a screen recording
+## Recording the GIF again
 
-The SVG is generated from a real run, but it is a rendering, not a capture. To record
-the real thing as a GIF or video:
+Install the `vhs` terminal recorder with `ttyd` and `ffmpeg` on PATH, start Ollama
+with `llama3.1:8b`, and run this from the repository root with the virtual
+environment in `.venv`. The tape is written for Windows PowerShell:
 
-1. Open a terminal at about 100 columns by 32 rows, dark theme, and `cd` into the
-   repository with the virtual environment active.
-2. Start any screen recorder on that window only. Do not record your desktop or
-   anything that shows your user name, home path or other windows.
-3. Run the live command above and wait for it to finish (about 20 seconds).
-4. Scroll back to the top, pause for about 5 seconds on each `== arm:` block, and
-   stop the recording. That gives roughly two minutes.
-5. Export to `docs/demo/demo.gif` (or `.mp4`), and check every frame for
-   personal paths before committing.
+```bash
+vhs docs/demo/demo.tape
+```
 
-Placeholder frames until a capture exists: the three `== arm:` blocks of
-`demo-final-frame.svg` are the three key frames (attack succeeds, blocked by the
-allowlist, blocked by both).
+The tape puts the virtual environment on PATH and sets a plain `$ ` prompt in a
+hidden step, so no local path or user name shows on screen. Check the last frame
+before committing.
