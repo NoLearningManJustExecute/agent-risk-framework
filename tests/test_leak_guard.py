@@ -355,6 +355,21 @@ def test_a_list_inside_the_repository_is_never_used_from_a_subfolder(
     assert "WARNING: no private denylist" in output
 
 
+def test_a_list_inside_the_repository_is_never_used_when_git_fails(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "_planning").mkdir()
+    (repo / "_planning" / "private-denylist.hashes").write_text(DENYLIST_TEXT, encoding="utf-8")
+    sub = repo / "sub"
+    sub.mkdir()
+    sample = sub / "a.txt"
+    sample.write_text(SECRET_WORD + "\n", encoding="utf-8")
+    monkeypatch.setattr(leak_guard, "repository_top", lambda root: None)
+    code, output = run_guard(["--root", str(sub), "--text", str(sample)], {}, capsys)
+    assert code == 0
+    assert "WARNING: no private denylist" in output
+
+
 def test_ci_needs_the_secret_even_with_a_local_list(
     repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -369,6 +384,8 @@ def test_ci_needs_the_secret_even_with_a_local_list(
     code, output = run_guard(args, {"CI": "true"}, capsys)
     assert code == 2
     assert "a denylist is required in CI" in output
+    assert "set the LEAK_DENYLIST repository secret" in output
+    assert "git config" not in output
     code, output = run_guard(args, {}, capsys)
     assert (code, "from git config leakguard.denylist" in output) == (0, True)
 

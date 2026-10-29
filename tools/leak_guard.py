@@ -1191,7 +1191,12 @@ def load_denylist(env: Mapping[str, str], root: Path) -> tuple[Denylist | None, 
                 raise GuardSetupError(f"git config {DENYLIST_CONFIG} does not name a readable file")
             source = f"git config {DENYLIST_CONFIG}"
             return Denylist.parse(path.read_text(encoding="utf-8")), source
-    for folder in (top or root.resolve()).parents:
+    if top is None:
+        # git could not answer (not a repository, or it refused this one): still never read a
+        # list from inside a folder that looks like a repository.
+        here = root.resolve()
+        top = next((f for f in (here, *here.parents) if (f / ".git").exists()), here)
+    for folder in top.parents:
         if folder == Path(folder.anchor):
             continue  # a drive or filesystem root can be writable by other users
         planning = folder / PLANNING_DENYLIST
@@ -1323,12 +1328,21 @@ def run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     denylist, source = load_denylist(env, root)
     if denylist is None:
         banner = "!" * 72
+        if in_ci:
+            looked = [
+                "Looked in: LEAK_DENYLIST_FILE and LEAK_DENYLIST (CI uses only these).",
+                "Fix: set the LEAK_DENYLIST repository secret.",
+            ]
+        else:
+            looked = [
+                f"Looked in: LEAK_DENYLIST_FILE, LEAK_DENYLIST, git config {DENYLIST_CONFIG}, and",
+                f"{PLANNING_DENYLIST.as_posix()} in every folder above the repository.",
+                f"Fix: git config {DENYLIST_CONFIG} <path to the list>",
+            ]
         warning = [
             banner,
             "WARNING: no private denylist found. Private identifiers are NOT being checked.",
-            f"Looked in: LEAK_DENYLIST_FILE, LEAK_DENYLIST, git config {DENYLIST_CONFIG}, and",
-            f"{PLANNING_DENYLIST.as_posix()} in every folder above the repository.",
-            f"Fix: git config {DENYLIST_CONFIG} <path to the list>",
+            *looked,
             banner,
         ]
         print("\n".join(warning), file=sys.stderr)

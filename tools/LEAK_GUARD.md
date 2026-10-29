@@ -91,7 +91,7 @@ The guard loads the list from the first of these that is set:
    `git config leakguard.denylist <path to the list>`;
 4. `_planning/private-denylist.hashes` in the nearest folder above the repository's top folder
    that has one, skipping the drive or filesystem root. A list inside the repository itself is
-   never used, even when `--root` names a subfolder.
+   never used, even when `--root` names a subfolder or git cannot read the repository.
 
 A named file (1 or 3) that does not exist, or a git setting that cannot be read, is a setup
 error, never a silent skip. The hooks use the same lookup, so a clone in the usual layout, or one
