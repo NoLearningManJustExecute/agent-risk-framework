@@ -55,7 +55,8 @@ from typing import Any
 
 ALLOW_FILE = ".leakguard-allow"
 BASELINE_FILE = ".leakguard-baseline"
-DEFAULT_DENYLIST = Path("..") / "_planning" / "private-denylist.hashes"
+PLANNING_DENYLIST = Path("_planning") / "private-denylist.hashes"
+DENYLIST_CONFIG = "leakguard.denylist"
 IMAGE_SUFFIXES = frozenset(
     {
         ".png",
@@ -1165,7 +1166,11 @@ def find_root(start: Path) -> Path:
 
 
 def load_denylist(env: Mapping[str, str], root: Path) -> tuple[Denylist | None, str]:
-    """Denylist and a description of its source, or (None, reason) when there is none."""
+    """Denylist and a description of its source, or (None, reason) when there is none.
+
+    In CI only the environment counts, so the job always needs the repository secret. Locally the
+    clone's git setting and a planning folder above the repository are used as well.
+    """
     named = env.get("LEAK_DENYLIST_FILE", "")
     if named:
         path = Path(named)
@@ -1175,10 +1180,60 @@ def load_denylist(env: Mapping[str, str], root: Path) -> tuple[Denylist | None, 
     inline = env.get("LEAK_DENYLIST", "")
     if inline.strip():
         return Denylist.parse(inline), "LEAK_DENYLIST"
-    default = root / DEFAULT_DENYLIST
-    if default.is_file():
-        return Denylist.parse(default.read_text(encoding="utf-8")), "private planning file"
+    if env.get("CI", "").lower() == "true":
+        return None, "no source"
+    top = repository_top(root)
+    if top is not None:
+        configured = configured_denylist(top)
+        if configured:
+            path = top / Path(configured).expanduser()
+            if not path.is_file():
+                raise GuardSetupError(f"git config {DENYLIST_CONFIG} does not name a readable file")
+            source = f"git config {DENYLIST_CONFIG}"
+            return Denylist.parse(path.read_text(encoding="utf-8")), source
+    if top is None:
+        # git could not answer (not a repository, or it refused this one): still never read a
+        # list from inside a folder that looks like a repository.
+        here = root.resolve()
+        top = next((f for f in (here, *here.parents) if (f / ".git").exists()), here)
+    for folder in top.parents:
+        if folder == Path(folder.anchor):
+            continue  # a drive or filesystem root can be writable by other users
+        planning = folder / PLANNING_DENYLIST
+        if planning.is_file():
+            return Denylist.parse(planning.read_text(encoding="utf-8")), "private planning file"
     return None, "no source"
+
+
+def repository_top(root: Path) -> Path | None:
+    """The top folder of the git repository holding ``root``, or None outside one."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, check=False
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.decode("utf-8", errors="replace").strip()).resolve()
+
+
+def configured_denylist(top: Path) -> str:
+    """The clone's own ``leakguard.denylist`` setting, or "" when it has none."""
+    try:
+        result = subprocess.run(
+            ["git", "config", "--local", "--get", DENYLIST_CONFIG],
+            cwd=top,
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return ""
+    if result.returncode == 1:
+        return ""
+    if result.returncode != 0:
+        raise GuardSetupError(f"git config {DENYLIST_CONFIG} could not be read")
+    return result.stdout.decode("utf-8", errors="replace").strip()
 
 
 def display_name(path: Path, root: Path) -> str:
@@ -1272,11 +1327,25 @@ def run(args: argparse.Namespace, env: Mapping[str, str]) -> int:
     in_ci = env.get("CI", "").lower() == "true"
     denylist, source = load_denylist(env, root)
     if denylist is None:
-        print(
-            "WARNING: no private denylist found (LEAK_DENYLIST_FILE, LEAK_DENYLIST or the "
-            "private planning file). Private identifiers are NOT being checked.",
-            file=sys.stderr,
-        )
+        banner = "!" * 72
+        if in_ci:
+            looked = [
+                "Looked in: LEAK_DENYLIST_FILE and LEAK_DENYLIST (CI uses only these).",
+                "Fix: set the LEAK_DENYLIST repository secret.",
+            ]
+        else:
+            looked = [
+                f"Looked in: LEAK_DENYLIST_FILE, LEAK_DENYLIST, git config {DENYLIST_CONFIG}, and",
+                f"{PLANNING_DENYLIST.as_posix()} in every folder above the repository.",
+                f"Fix: git config {DENYLIST_CONFIG} <path to the list>",
+            ]
+        warning = [
+            banner,
+            "WARNING: no private denylist found. Private identifiers are NOT being checked.",
+            *looked,
+            banner,
+        ]
+        print("\n".join(warning), file=sys.stderr)
         if in_ci:
             print("error: a denylist is required in CI", file=sys.stderr)
             return 2
