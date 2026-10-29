@@ -1,0 +1,4 @@
+# Leak guard configuration changes need the owner's review, like code.
+/.leakguard-baseline @NoLearningManJustExecute
+/.leakguard-allow @NoLearningManJustExecute
+/tools/leak_guard.py @NoLearningManJustExecute

@@ -1,0 +1,76 @@
+name: Leak guard
+
+# Blocking gate: the commits a pull request or push adds, the pull request text, and the
+# committed generated outputs. No path filters, so documentation changes are checked too.
+# The whole tree and full history are scanned by the scheduled "Leak guard full scan" workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: leak-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  leak-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Scan new commits
+        env:
+          LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            python tools/leak_guard.py --range "$PR_BASE..$PR_HEAD"
+          elif [ -z "$PUSH_BEFORE" ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            python tools/leak_guard.py --history
+          else
+            python tools/leak_guard.py --range "$PUSH_BEFORE..$PUSH_AFTER"
+          fi
+      - name: Scan pull request text
+        if: github.event_name == 'pull_request'
+        env:
+          LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/leak_guard.py --pr
+      - name: Scan committed generated outputs
+        env:
+          LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+        run: |
+          args=()
+          for file in findings/* docs/report/*.html docs/phase4_ablation.md docs/demo/transcript.txt; do
+            if [ -f "$file" ]; then args+=(--text "$file"); fi
+          done
+          python tools/leak_guard.py "${args[@]}"
+      - name: Flag baseline changes for review
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$PR_BASE" "$PR_HEAD" -- .leakguard-baseline .leakguard-allow; then
+            echo "leak guard baseline and allowlist unchanged"
+          else
+            echo "::warning::.leakguard-baseline or .leakguard-allow changed: review every added entry"
+          fi
