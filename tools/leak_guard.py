@@ -1166,7 +1166,11 @@ def find_root(start: Path) -> Path:
 
 
 def load_denylist(env: Mapping[str, str], root: Path) -> tuple[Denylist | None, str]:
-    """Denylist and a description of its source, or (None, reason) when there is none."""
+    """Denylist and a description of its source, or (None, reason) when there is none.
+
+    In CI only the environment counts, so the job always needs the repository secret. Locally the
+    clone's git setting and a planning folder above the repository are used as well.
+    """
     named = env.get("LEAK_DENYLIST_FILE", "")
     if named:
         path = Path(named)
@@ -1176,32 +1180,54 @@ def load_denylist(env: Mapping[str, str], root: Path) -> tuple[Denylist | None, 
     inline = env.get("LEAK_DENYLIST", "")
     if inline.strip():
         return Denylist.parse(inline), "LEAK_DENYLIST"
-    configured = configured_denylist(root)
-    if configured:
-        path = root / Path(configured).expanduser()
-        if not path.is_file():
-            raise GuardSetupError(f"git config {DENYLIST_CONFIG} does not name a readable file")
-        return Denylist.parse(path.read_text(encoding="utf-8")), f"git config {DENYLIST_CONFIG}"
-    for folder in root.parents:
+    if env.get("CI", "").lower() == "true":
+        return None, "no source"
+    top = repository_top(root)
+    if top is not None:
+        configured = configured_denylist(top)
+        if configured:
+            path = top / Path(configured).expanduser()
+            if not path.is_file():
+                raise GuardSetupError(f"git config {DENYLIST_CONFIG} does not name a readable file")
+            source = f"git config {DENYLIST_CONFIG}"
+            return Denylist.parse(path.read_text(encoding="utf-8")), source
+    for folder in (top or root.resolve()).parents:
+        if folder == Path(folder.anchor):
+            continue  # a drive or filesystem root can be writable by other users
         planning = folder / PLANNING_DENYLIST
         if planning.is_file():
             return Denylist.parse(planning.read_text(encoding="utf-8")), "private planning file"
     return None, "no source"
 
 
-def configured_denylist(root: Path) -> str:
+def repository_top(root: Path) -> Path | None:
+    """The top folder of the git repository holding ``root``, or None outside one."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=root, capture_output=True, check=False
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return Path(result.stdout.decode("utf-8", errors="replace").strip()).resolve()
+
+
+def configured_denylist(top: Path) -> str:
     """The clone's own ``leakguard.denylist`` setting, or "" when it has none."""
     try:
         result = subprocess.run(
             ["git", "config", "--local", "--get", DENYLIST_CONFIG],
-            cwd=root,
+            cwd=top,
             capture_output=True,
             check=False,
         )
     except OSError:
         return ""
-    if result.returncode != 0:
+    if result.returncode == 1:
         return ""
+    if result.returncode != 0:
+        raise GuardSetupError(f"git config {DENYLIST_CONFIG} could not be read")
     return result.stdout.decode("utf-8", errors="replace").strip()
 
 

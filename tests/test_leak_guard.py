@@ -325,6 +325,52 @@ def test_no_git_means_no_configured_denylist(
 
     monkeypatch.setattr(subprocess, "run", missing)
     assert leak_guard.configured_denylist(tmp_path) == ""
+    assert leak_guard.repository_top(tmp_path) is None
+
+
+def test_unreadable_git_config_is_a_setup_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    completed = subprocess.CompletedProcess
+
+    def broken(args: Any, **kwargs: Any) -> Any:
+        return completed(args, 128, b"", b"bad config line 3")
+
+    monkeypatch.setattr(subprocess, "run", broken)
+    with pytest.raises(GuardSetupError, match="could not be read"):
+        leak_guard.configured_denylist(tmp_path)
+
+
+def test_a_list_inside_the_repository_is_never_used_from_a_subfolder(
+    repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (repo / "_planning").mkdir()
+    (repo / "_planning" / "private-denylist.hashes").write_text(DENYLIST_TEXT, encoding="utf-8")
+    sub = repo / "sub"
+    sub.mkdir()
+    sample = sub / "a.txt"
+    sample.write_text(SECRET_WORD + "\n", encoding="utf-8")
+    code, output = run_guard(["--root", str(sub), "--text", str(sample)], {}, capsys)
+    assert code == 0
+    assert "WARNING: no private denylist" in output
+
+
+def test_ci_needs_the_secret_even_with_a_local_list(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "_planning").mkdir()
+    (tmp_path / "_planning" / "private-denylist.hashes").write_text(DENYLIST_TEXT, encoding="utf-8")
+    listed = tmp_path / "list.hashes"
+    listed.write_text(DENYLIST_TEXT, encoding="utf-8")
+    git(repo, "config", "leakguard.denylist", str(listed))
+    sample = repo / "a.txt"
+    sample.write_text("clean\n", encoding="utf-8")
+    args = ["--root", str(repo), "--text", str(sample)]
+    code, output = run_guard(args, {"CI": "true"}, capsys)
+    assert code == 2
+    assert "a denylist is required in CI" in output
+    code, output = run_guard(args, {}, capsys)
+    assert (code, "from git config leakguard.denylist" in output) == (0, True)
 
 
 def test_missing_denylist_warns_locally_and_fails_in_ci(
