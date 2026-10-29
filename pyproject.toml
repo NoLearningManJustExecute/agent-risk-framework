@@ -26,6 +26,8 @@ dev = [
     "pytest>=9.0,<10",
     "ruff>=0.17,<0.18",
     "pip-audit>=2.9,<3",
+    # Validates gauntlet exports against the schema files copied into tests/fixtures.
+    "jsonschema>=4.23,<5",
 ]
 
 [tool.setuptools.packages.find]

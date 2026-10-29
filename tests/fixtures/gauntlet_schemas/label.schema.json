@@ -1,0 +1,182 @@
+{
+  "$defs": {
+    "Guardrails": {
+      "enum": [
+        "on",
+        "off"
+      ],
+      "title": "Guardrails",
+      "type": "string"
+    },
+    "LabelSource": {
+      "enum": [
+        "synthetic",
+        "rag-attack-lab",
+        "agent-risk-framework"
+      ],
+      "title": "LabelSource",
+      "type": "string"
+    },
+    "Split": {
+      "enum": [
+        "dev",
+        "heldout"
+      ],
+      "title": "Split",
+      "type": "string"
+    },
+    "Verdict": {
+      "enum": [
+        "malicious",
+        "benign"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One line of a labels JSONL file.",
+  "properties": {
+    "attack_class": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Attack class for malicious traces, null for benign.",
+      "title": "Attack Class"
+    },
+    "attack_succeeded": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Whether the attack achieved its goal. Required for malicious, null for benign.",
+      "title": "Attack Succeeded"
+    },
+    "condition": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "0.2: the experiment arm (condition) the trace ran under.",
+      "title": "Condition"
+    },
+    "guardrails": {
+      "$ref": "#/$defs/Guardrails"
+    },
+    "label": {
+      "$ref": "#/$defs/Verdict"
+    },
+    "mutation": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Evasion mutation applied, or null for an unmutated run.",
+      "title": "Mutation"
+    },
+    "scenario_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "0.2: the attack scenario the trace ran. Malicious traces only.",
+      "title": "Scenario Id"
+    },
+    "schema_version": {
+      "enum": [
+        "0.1",
+        "0.2"
+      ],
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/LabelSource"
+    },
+    "source_run_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "0.2: the run's identifier in the source repository's run log.",
+      "title": "Source Run Id"
+    },
+    "split": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Split"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "dev or heldout. Null (0.2 only) means not yet assigned: an exporter's output before the split is frozen. Metrics refuse unassigned labels."
+    },
+    "task_id": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "0.2: the benign task the trace ran. Benign traces only.",
+      "title": "Task Id"
+    },
+    "trace_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+      "title": "Trace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "trace_id",
+    "label",
+    "attack_class",
+    "attack_succeeded",
+    "mutation",
+    "guardrails",
+    "split",
+    "source"
+  ],
+  "title": "LabelRecord",
+  "type": "object"
+}

@@ -1,0 +1,88 @@
+{
+  "$defs": {
+    "EventType": {
+      "enum": [
+        "session.start",
+        "user.prompt",
+        "retrieval",
+        "llm.request",
+        "llm.response",
+        "tool.call",
+        "tool.result",
+        "guardrail.action",
+        "session.end"
+      ],
+      "title": "EventType",
+      "type": "string"
+    },
+    "JsonValue": {}
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One line of a trace JSONL file.",
+  "properties": {
+    "attributes": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "description": "OpenTelemetry GenAI attributes plus adg.* extensions.",
+      "title": "Attributes",
+      "type": "object"
+    },
+    "event_type": {
+      "$ref": "#/$defs/EventType"
+    },
+    "parent_span_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Span that caused this event, or null for a root event.",
+      "title": "Parent Span Id"
+    },
+    "schema_version": {
+      "description": "Trace schema version.",
+      "enum": [
+        "0.1",
+        "0.2"
+      ],
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "span_id": {
+      "description": "Identifier of this event, unique within the trace.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+      "title": "Span Id",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "Event time, RFC 3339 in UTC.",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?(Z|\\+00:00)$",
+      "title": "Timestamp",
+      "type": "string"
+    },
+    "trace_id": {
+      "description": "Identifier of the session this event belongs to.",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$",
+      "title": "Trace Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "trace_id",
+    "span_id",
+    "parent_span_id",
+    "timestamp",
+    "event_type",
+    "attributes"
+  ],
+  "title": "TraceEvent",
+  "type": "object"
+}
