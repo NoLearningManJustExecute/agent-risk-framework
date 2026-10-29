@@ -1,0 +1,4 @@
+# Exact strings that the leak guard may accept for generic rules only.
+# Each entry: <exact match or exact trimmed line> # <reason>
+# Denylist hashes are never affected by this file, and it may not contain a private identifier.
+and re.fullmatch(r"/home/runner(/.*)?", found) is not None # reason: detector pattern definition, not a real occurrence
