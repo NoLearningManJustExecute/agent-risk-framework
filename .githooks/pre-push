@@ -1,0 +1,11 @@
+#!/bin/sh
+# Local safety net: block a push when the working tree or any reachable commit holds personal data, an absolute
+# local path or a secret. CI runs the same guard and is the real enforcement.
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+if python3 -c "" >/dev/null 2>&1; then
+    py=python3
+else
+    py=python
+fi
+exec "$py" tools/leak_guard.py --all
