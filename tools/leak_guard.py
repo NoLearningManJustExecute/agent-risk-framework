@@ -158,6 +158,36 @@ def _path_after(text: str, start: int) -> str:
     return text[start:end]
 
 
+# Scripts written without spaces between words. A path can follow such text directly, so a
+# letter from one of these before a drive letter does not make the match a word.
+_SPACELESS_SCRIPTS: tuple[tuple[int, int], ...] = (
+    (0x0E00, 0x0EFF),  # Thai, Lao
+    (0x1000, 0x109F),  # Myanmar
+    (0x1100, 0x11FF),  # Hangul Jamo
+    (0x1780, 0x17FF),  # Khmer
+    (0x3040, 0x31FF),  # Hiragana, Katakana, Bopomofo, Hangul compatibility, Kanbun
+    (0x3400, 0x4DBF),  # CJK extension A
+    (0x4E00, 0x9FFF),  # CJK unified ideographs
+    (0xAC00, 0xD7AF),  # Hangul syllables
+    (0xF900, 0xFAFF),  # CJK compatibility ideographs
+    (0xFF00, 0xFFEF),  # Fullwidth and halfwidth forms
+    (0x20000, 0x3FFFF),  # CJK extensions B and later
+)
+
+
+def _ends_a_word(text: str, start: int) -> bool:
+    """True when the drive letter at ``start`` follows a non-ASCII letter of a script that
+    separates words with spaces. Then ``x:`` ends a word (for example a translated word
+    before a colon and an escaped newline), not a path."""
+    if start == 0:
+        return False
+    before = text[start - 1]
+    if not before.isalpha() or before.isascii():
+        return False
+    code = ord(before)
+    return not any(low <= code <= high for low, high in _SPACELESS_SCRIPTS)
+
+
 def windows_path_exempt(match: re.Match[str], text: str, origin: str | None) -> bool:
     """System locations never name a user, and tests and docs may use one-segment probes.
 
@@ -169,6 +199,8 @@ def windows_path_exempt(match: re.Match[str], text: str, origin: str | None) -> 
     segments = [part for part in segments if part]
     if ".." in segments or USER_PATH_SEGMENTS.intersection(segments):
         return False
+    if _ends_a_word(text, match.start()):
+        return True
     if segments and segments[0] in SYSTEM_PATH_ROOTS:
         return True
     return is_fixture_path(origin) and len(segments) <= 1
