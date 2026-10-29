@@ -34,7 +34,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "."]
 
 [tool.ruff.lint]
 select = [
@@ -51,8 +51,14 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]  # assert is how pytest works
+# The leak guard runs git with fixed arguments, reads the GitHub API URL from the Actions
+# environment, and skips corrupt archive entries instead of aborting the scan; its tests use fake
+# tokens and throwaway git repositories.
+"tools/leak_guard.py" = ["S603", "S607", "S310", "S112"]
+"tests/test_leak_guard.py" = ["S105", "S603", "S607"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
 filterwarnings = ["error"]

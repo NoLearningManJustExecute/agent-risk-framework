@@ -1,0 +1,109 @@
+name: Leak guard
+
+# Blocking gate: the commits a pull request or push adds, the pull request text, and the
+# committed generated outputs. No path filters, so documentation changes are checked too.
+# The whole tree and full history are scanned by the scheduled "Leak guard full scan" workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+# Pull request runs replace each other. Every push to main gets its own group, so no pushed
+# range is ever cancelled or skipped while queued.
+concurrency:
+  group: leak-guard-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  leak-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      # The gate runs the guard from the default branch (pull requests) or the previous main
+      # (pushes), so a change cannot weaken the guard that checks it. It falls back to this
+      # change's copy only when that commit has no guard with range support (the first install,
+      # or the upgrade that adds it).
+      - name: Select the guard
+        env:
+          EVENT: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          base="$PUSH_BEFORE"
+          if [ "$EVENT" = "pull_request" ]; then base="origin/$DEFAULT_BRANCH"; fi
+          guard="tools/leak_guard.py"
+          if [ -n "$base" ] && git cat-file -e "$base:tools/leak_guard.py" 2>/dev/null; then
+            git show "$base:tools/leak_guard.py" > "$RUNNER_TEMP/leak_guard.py"
+            if python "$RUNNER_TEMP/leak_guard.py" --help | grep -q -- "--range"; then
+              guard="$RUNNER_TEMP/leak_guard.py"
+            fi
+          fi
+          if [ "$guard" = "tools/leak_guard.py" ]; then
+            echo "leak guard source: this change (the base has no guard with range support)"
+          else
+            echo "leak guard source: $base"
+          fi
+          echo "LEAK_GUARD=$guard" >> "$GITHUB_ENV"
+      - name: Scan new commits
+        env:
+          LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            python "$LEAK_GUARD" --root . --range "$PR_BASE..$PR_HEAD"
+          elif [ -z "$PUSH_BEFORE" ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            python "$LEAK_GUARD" --root . --history
+          else
+            python "$LEAK_GUARD" --root . --range "$PUSH_BEFORE..$PUSH_AFTER"
+          fi
+      - name: Scan pull request text
+        if: github.event_name == 'pull_request'
+        env:
+          LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python "$LEAK_GUARD" --root . --pr
+      - name: Scan committed generated outputs
+        env:
+          LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+        run: |
+          args=()
+          outputs="findings/* docs/report/* docs/phase2_results.md docs/phase4_ablation.md"
+          outputs="$outputs docs/phase4_ablation.svg docs/demo/*"
+          for file in $outputs; do
+            if [ -f "$file" ]; then args+=(--text "$file"); fi
+          done
+          if [ "${#args[@]}" -gt 0 ]; then
+            python "$LEAK_GUARD" --root . "${args[@]}"
+          else
+            echo "no committed outputs to scan"
+          fi
+      - name: Flag baseline changes for review
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --quiet "$PR_BASE" "$PR_HEAD" -- .leakguard-baseline .leakguard-allow .github .githooks tools/leak_guard.py; then
+            echo "leak guard baseline and allowlist unchanged"
+          else
+            echo "::warning::leak guard configuration, workflows or hooks changed: review every change; baseline and allowlist changes apply only after they reach the base branch"
+          fi
