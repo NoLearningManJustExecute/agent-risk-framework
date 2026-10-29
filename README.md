@@ -1,8 +1,12 @@
+![agent-risk-framework: an attack blocked by the permission layer](docs/assets/demo-banner.svg)
+
 # agent-risk-framework
 
 I built a deliberately vulnerable tool-using LLM agent, attacked it with 24 scenarios,
 and measured how much each of six guardrails actually buys and what each costs on
 legitimate work.
+
+Live demo: https://nolearningmanjustexecute.github.io/agent-risk-framework/
 
 Defense companion to [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab):
 that project demonstrates RAG weaknesses; this one measures defenses for agents.
