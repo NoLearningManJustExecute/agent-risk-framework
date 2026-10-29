@@ -18,6 +18,8 @@ Output:
 | `labels.jsonl` | One label per run (shared by every K) |
 | `export_manifest.json` | Source commit, run log file name, experiments, model and digest, K values, counts, sha256 of every file |
 
+Seeded variants (`data/seeding/seeded_scenarios.json`, see docs/corpus_seeding.md) are loaded
+alongside the authored scenarios when the file exists; `--seeded` points elsewhere.
 Runs whose outcome is `error` did not complete and are skipped; the manifest counts them.
 `--out` must be empty or a previous export (exactly the manifest, labels and `k<K>/traces/`
 files). The export is written to `<out>.partial` first and replaces `--out` only after the leak
