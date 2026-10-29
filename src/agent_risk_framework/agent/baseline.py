@@ -6,7 +6,7 @@ no defenses here, so `detector_result` is `not_evaluated` and `guardrail_action`
 is `none`: this run measures only what the agent does on legitimate work.
 
 Completion is scored deterministically from the tool-call log by the Phase 0
-`BenignTask.completed` criteria (`must_call` / `must_not_call`) — no LLM judge.
+`BenignTask.completed` criteria (`must_call` / `must_not_call`), no LLM judge.
 
 CLI (live, needs a local Ollama):
 

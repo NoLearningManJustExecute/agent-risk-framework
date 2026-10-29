@@ -1,4 +1,4 @@
-# Phase 3 — Guardrail engine
+# Phase 3: Guardrail engine
 
 > Phase 3.5 added a sixth control, `egress_filter` (secret/PII egress filter), and
 > changed the `output-filter-only` preset to `output_classifier` + `egress_filter`.
@@ -199,7 +199,7 @@ allowed everything, and `not_evaluated` for the baseline. `detector_latency_ms` 
 the summed decision latency. These columns feed the existing Phase 0 metrics
 (detection rate, false positive rate, blocked action rate) unchanged.
 
-Schema v4 adds three tables and changes no existing one, so v1–v3 databases upgrade
+Schema v4 adds three tables and changes no existing one, so v1-v3 databases upgrade
 in place: `decisions`, `attributions` (below) and `run_controls`.
 
 ## Scoring decisions, locked before Phase 4
@@ -300,10 +300,10 @@ scenarios and 13 benign tasks once each. 37 runs, 0 errors.
 | Measure | Phase 2 baseline (N=10) | Phase 3 `combined` (N=1) |
 | --- | --- | --- |
 | Attack success | 160/260 (62%) | **0/24** |
-| Attack runs `blocked_by_control` | — | 21/24 |
-| Attack runs `did_not_execute` / `failed_other` | — | 2 (AC03, AC06) / 1 (AC03-OBF) |
+| Attack runs `blocked_by_control` | - | 21/24 |
+| Attack runs `did_not_execute` / `failed_other` | - | 2 (AC03, AC06) / 1 (AC03-OBF) |
 | Benign task success | 90/120 (75%) | 10/13 |
-| Benign runs `blocked_by_control` (false-positive cost) | — | **0/13** |
+| Benign runs `blocked_by_control` (false-positive cost) | - | **0/13** |
 | Benign-input violation | 20/120 (17%) | 1/13 |
 
 Credits per control (four runs were credited to two controls):
@@ -338,9 +338,10 @@ The run log is git-ignored (`runs/`); the command above reproduces it.
 
 ## Engineering calls and deviations
 
-- **Rule-based classifier, not LLM Guard.** The roadmap named LLM Guard. A local
-  ML classifier would add a large dependency tree, network-fetched model weights
-  and nondeterminism to an offline, deterministic, CI-tested lab. The rule-based
+- **Rule-based classifier, not an ML scanner.** The roadmap named an off-the-shelf
+  ML scanner. A local ML classifier would add a large dependency tree,
+  network-fetched model weights and nondeterminism to an offline, deterministic,
+  CI-tested lab. The rule-based
   classifier is reproducible and auditable, and its limits are pinned by tests. An
   ML classifier can be added later as one more switch.
 - **No canary/secret output filter.** The planned output filter was replaced, for

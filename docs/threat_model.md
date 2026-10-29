@@ -1,7 +1,7 @@
 # Threat Model
 
 Status: Phase 0 draft, controls updated in Phase 3. It covers the agent that
-Phases 1–3 built, so the measurement rig, attack cases, and controls all trace back
+Phases 1-3 built, so the measurement rig, attack cases, and controls all trace back
 to one document.
 
 ## 1. System overview
@@ -27,17 +27,29 @@ defenses flagged or blocked is logged separately.
 
 | Order | Framework | ID format | Notes |
 | --- | --- | --- | --- |
-| Primary | OWASP Top 10 for Agentic Applications 2026 | `ASI01`–`ASI10` | Required on every threat and finding |
-| Secondary | OWASP Top 10 for LLM Applications 2026 | `LLM01:2026`–`LLM10:2026` | Same vocabulary as rag-attack-lab |
-| Tertiary | OWASP MCP Top 10 (**beta**) | `MCP01:2025`–`MCP10:2025` | Optional; beta IDs may be renumbered |
+| Primary | OWASP Top 10 for Agentic Applications 2026 | `ASI01`-`ASI10` | Required on every threat and finding |
+| Secondary | OWASP Top 10 for LLM Applications 2026 | `LLM01:2026`-`LLM10:2026` | Same vocabulary as rag-attack-lab |
+| Tertiary | OWASP MCP Top 10 (**beta**) | `MCP01:2025`-`MCP10:2025` | Optional; beta IDs may be renumbered |
 | Techniques | MITRE ATLAS (content release 2026.09) | `AML.Txxxx[.yyy]` | Required on every finding |
 
 A threat may map to several IDs per framework; a finding carries one primary ID per
 framework (ASI, LLM, and ATLAS required; MCP when applicable) and names any
 secondary IDs in its description.
 
-Verification status: the LLM 2026 IDs below come from published summaries of the
-2026 edition. Check them against the official OWASP document before the Phase 5 release.
+Verification status: verified in Phase 5 against the official OWASP document, "OWASP
+Top 10 for LLM Applications 2026", Version 2026, August 4th, 2026 (genai.owasp.org).
+Every ID used here matches its 2026 title:
+- `LLM01` Prompt Injection
+- `LLM02` Sensitive Information Disclosure
+- `LLM03` Excessive Agency
+- `LLM04` Supply Chain
+- `LLM06` Unbounded Consumption
+- `LLM08` Hidden Context Exposure (formerly System Prompt Leakage)
+- `LLM09` Vector and Embedding Weaknesses
+- `LLM10` Improper Output Handling
+
+The 2026 numbering differs from the 2025 list, so a 2025-era reference with the same
+number may name a different risk.
 
 ASI titles: ASI01 Agent Goal Hijack · ASI02 Tool Misuse and Exploitation ·
 ASI03 Identity and Privilege Abuse · ASI04 Agentic Supply Chain Vulnerabilities ·
@@ -91,28 +103,28 @@ Servers · MCP10 Context Injection & Over-Sharing.
 
 ## 6. Threats
 
-Attack case IDs (`AC01`–`AC12B`, built in Phase 2; T12 is split into `AC12A` rug pull and `AC12B` shadow tool) each also run in an obfuscated
+Attack case IDs (`AC01`-`AC12B`, built in Phase 2; T12 is split into `AC12A` rug pull and `AC12B` shadow tool) each also run in an obfuscated
 variant (encoding, splitting, other languages; ATLAS AML.T0068 LLM Prompt Obfuscation).
 
 | ID | Threat | Actor | ASI | LLM 2026 | MCP (beta) | ATLAS | Case | Scope |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| T01 | Role/policy override via direct prompt | TA1 | ASI01 | LLM01:2026 | — | AML.T0051.000, AML.T0054 | AC05 | In |
+| T01 | Role/policy override via direct prompt | TA1 | ASI01 | LLM01:2026 | - | AML.T0051.000, AML.T0054 | AC05 | In |
 | T02 | Indirect injection via tool-returned email/file | TA2 | ASI01 | LLM01:2026 | MCP06:2025 | AML.T0051.001 | AC09 | In |
 | T03 | Unauthorized tool invocation (email outside allowlist) | TA1, TA2 | ASI02 | LLM03:2026 | MCP02:2025 | AML.T0053 | AC01 | In |
 | T04 | Restricted file access (path escape) | TA1, TA2 | ASI02, ASI03 | LLM03:2026 | MCP02:2025 | AML.T0053, AML.T0085.001 | AC02 | In |
-| T05 | Tool chaining to bypass a restriction | TA1, TA2 | ASI02 | LLM03:2026 | — | AML.T0053 | AC03 | In |
-| T06 | Parameter manipulation in tool calls | TA1, TA2 | ASI02 | LLM03:2026 | — | AML.T0053 | AC06 | In |
-| T07 | Exfiltration via tool arguments (confused deputy) | TA2 | ASI03 | LLM02:2026 | — | AML.T0086 | AC10 | In |
+| T05 | Tool chaining to bypass a restriction | TA1, TA2 | ASI02 | LLM03:2026 | - | AML.T0053 | AC03 | In |
+| T06 | Parameter manipulation in tool calls | TA1, TA2 | ASI02 | LLM03:2026 | - | AML.T0053 | AC06 | In |
+| T07 | Exfiltration via tool arguments (confused deputy) | TA2 | ASI03 | LLM02:2026 | - | AML.T0086 | AC10 | In |
 | T08 | System prompt / hidden context leak | TA1 | ASI01 | LLM08:2026 | MCP10:2025 | AML.T0056 | AC04 | In |
-| T09 | Approval-gate bypass (misleading summary, request splitting) | TA1, TA2 | ASI09 | LLM03:2026 | — | AML.T0053 | AC07 | In |
-| T10 | Excessive agency: unrequested autonomous action | TA4 | ASI02, ASI10 | LLM03:2026 | — | AML.T0053 | BT-013 (was AC08) | In (scored by `benign_input_violation`) |
+| T09 | Approval-gate bypass (misleading summary, request splitting) | TA1, TA2 | ASI09 | LLM03:2026 | - | AML.T0053 | AC07 | In |
+| T10 | Excessive agency: unrequested autonomous action | TA4 | ASI02, ASI10 | LLM03:2026 | - | AML.T0053 | BT-013 (was AC08) | In (scored by `benign_input_violation`) |
 | T11 | Poisoned MCP tool description | TA3 | ASI04 | LLM04:2026 | MCP03:2025 | AML.T0115.002, AML.T0011.002 | AC11 | In |
 | T12 | Post-approval rug pull / shadow tool | TA3 | ASI04 | LLM04:2026 | MCP03:2025, MCP04:2025 | AML.T0110, AML.T0115.002 | AC12A, AC12B | In |
-| T13 | Runaway loops and resource exhaustion | TA1, TA4 | ASI08 | LLM06:2026 | — | AML.T0034.002 | — | In (step cap measured, no dedicated case) |
-| T14 | Memory/context poisoning across sessions | TA2 | ASI06 | LLM01:2026 | MCP10:2025 | AML.T0080 | — | Deferred: v1 agent has no persistent memory |
-| T15 | Retrieval poisoning via optional RAG tool | TA2 | ASI06 | LLM09:2026 | — | AML.T0070 | — | Deferred: covered by rag-attack-lab |
-| T16 | Unexpected code execution | TA1, TA2 | ASI05 | LLM10:2026 | MCP05:2025 | AML.T0050 | — | Out: no code-exec tool by design |
-| T17 | Insecure inter-agent communication | — | ASI07 | — | — | — | — | Out: single agent |
+| T13 | Runaway loops and resource exhaustion | TA1, TA4 | ASI08 | LLM06:2026 | - | AML.T0034.002 | - | In (step cap measured, no dedicated case) |
+| T14 | Memory/context poisoning across conversations | TA2 | ASI06 | LLM01:2026 | MCP10:2025 | AML.T0080 | - | Deferred: v1 agent has no persistent memory |
+| T15 | Retrieval poisoning via optional RAG tool | TA2 | ASI06 | LLM09:2026 | - | AML.T0070 | - | Deferred: covered by rag-attack-lab |
+| T16 | Unexpected code execution | TA1, TA2 | ASI05 | LLM10:2026 | MCP05:2025 | AML.T0050 | - | Out: no code-exec tool by design |
+| T17 | Insecure inter-agent communication | - | ASI07 | - | - | - | - | Out: single agent |
 
 Mapping notes:
 
@@ -179,7 +191,7 @@ See [phase4_ablation.md](phase4_ablation.md).
 
 1. The host machine, Python runtime, and Ollama binary are trusted; model weights come from the official Ollama registry.
 2. All data is synthetic. No real credentials, PII, or production systems exist anywhere in the lab.
-3. Single user, single agent, no persistent memory across sessions (v1).
+3. Single user, single agent, no persistent memory across conversations (v1).
 4. Fixed seeds and temperature make runs repeatable on one machine. They are not bit-identical across hardware or Ollama versions; results report the model, seed, and temperature for every run.
 5. The fake tools model real side effects faithfully enough that "send_email was called with recipient X" counts as the harmful action.
 6. Small local models (llama3.1:8b) may be unreliable at tool calling; baseline tool-call reliability is measured before attack results are interpreted.

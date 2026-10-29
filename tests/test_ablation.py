@@ -125,7 +125,11 @@ def test_report_is_computed_from_the_log(tmp_path) -> None:
     # The benign tasks also get the outside send: every arm with a control intervenes.
     assert by["tool_permissions"].fpr.k == by["tool_permissions"].fpr.n == 4
     assert by["baseline"].fpr.k == 0
+    # Every intervention is either a true false positive or a desired block, never both.
+    for s in stats:
+        assert s.benign_lost.k + s.desired_blocks.k == s.fpr.k
     tables = render_tables(stats)
+    assert "### Usefulness cost: true false positives vs desired blocks" in tables
     assert "| `combined` |" in tables and "2/4 (50%)" in tables
     doc = f"# Title\n\nintro\n\n{START}\nold\n{END}\n\nfindings\n"
     spliced = splice(doc, tables)
