@@ -154,7 +154,10 @@ Every string goes through `provenance.redact` before it is written:
 - paths under the lab's temporary root (`arf-lab-*`) become relative to the workspace;
 - home folders (a drive's `Users` folder, `/Users`, `/home`) become `<home>`;
 - this process's user and host names (from `USERNAME`, `USER`, `LOGNAME`, `COMPUTERNAME`,
-  `HOSTNAME`, `USERDOMAIN`, values of at least 4 characters) become `<host>` as whole words.
+  `HOSTNAME`, `USERDOMAIN`, values of at least 4 characters) become `<host>` as whole words;
+- an address on a domain that is not reserved, which only the model's own text can hold, keeps its
+  text and gets `.invalid` appended, so it stays a distinct address outside the allowlist;
+- en and em dash characters become `-`.
 
 The manifest names the run log by file name and every output file relative to `--out`. Model
 name and digest are kept. Then `tools/leak_guard.py --text` scans every exported file; a hit, or
