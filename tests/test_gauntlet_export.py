@@ -177,6 +177,17 @@ def test_redact() -> None:
     assert redact("dana-boxes stay", ("dana-box",)) == "dana-boxes stay"
 
 
+def test_redact_moves_a_garbled_address_under_invalid() -> None:
+    domain = ".".join(["example", "exfil"])
+    assert redact(f"to dana@{domain} now") == f"to dana@{domain}.invalid now"
+    for safe in ("dana@firm.example", "dana@example.test", "dana@mail.example.org", "a@b.invalid"):
+        assert redact(f"to {safe}.") == f"to {safe}."
+
+
+def test_redact_replaces_dash_characters() -> None:
+    assert redact("a" + chr(0x2014) + "b" + chr(0x2013) + "c-d") == "a-b-c-d"
+
+
 def test_host_identifiers_ignore_short_values() -> None:
     env = {"USERNAME": "abc", "COMPUTERNAME": "jordan-pc", "USER": ""}
     assert host_identifiers(env) == ("jordan-pc",)

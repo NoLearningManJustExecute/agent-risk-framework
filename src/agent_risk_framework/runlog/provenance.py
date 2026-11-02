@@ -173,6 +173,23 @@ _LAB_ROOT_RE = re.compile(
 )
 _HOME_RE = re.compile(r"(?:[A-Za-z]:[\\/]+Users|/Users|/home)[\\/]+[^\\/\s'\"]+", re.IGNORECASE)
 _HOST_ENV = ("USERNAME", "USER", "LOGNAME", "COMPUTERNAME", "HOSTNAME", "USERDOMAIN")
+# What the model writes can hold what the leak guard refuses: an address it garbled onto a domain
+# that is not reserved, or a dash character. Same address pattern and reserved domains as the guard.
+_ADDRESS_RE = re.compile(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")
+_DASH_RE = re.compile("[" + chr(0x2013) + chr(0x2014) + "]")
+_RESERVED_SUFFIXES = (".example", ".test", ".invalid")
+_RESERVED_DOMAINS = ("example.com", "example.net", "example.org")
+
+
+def _reserved_address(match: re.Match[str]) -> str:
+    """An address on a domain that is not reserved moves under `.invalid`, otherwise unchanged."""
+    address = match.group()
+    domain = address.rpartition("@")[2].lower()
+    if domain.endswith(_RESERVED_SUFFIXES) or any(
+        domain == base or domain.endswith(f".{base}") for base in _RESERVED_DOMAINS
+    ):
+        return address
+    return f"{address}.invalid"
 
 
 def host_identifiers(env: Mapping[str, str] | None = None) -> tuple[str, ...]:
@@ -188,4 +205,5 @@ def redact(text: str, identifiers: Sequence[str] = ()) -> str:
     text = _HOME_RE.sub("<home>", text)
     for value in identifiers:
         text = re.sub(rf"(?<![\w.-]){re.escape(value)}(?![\w-])", "<host>", text, flags=re.I)
-    return text
+    text = _ADDRESS_RE.sub(_reserved_address, text)
+    return _DASH_RE.sub("-", text)
