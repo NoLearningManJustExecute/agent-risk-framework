@@ -75,6 +75,7 @@ MCP_KINDS: dict[str, frozenset[str]] = {
     "shadow_tool": frozenset({"tool", "description", "copy_to"}),
 }
 _TOOL_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_EXAMPLE_ADDRESS_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.example")
 
 
 class ScenarioError(ValueError):
@@ -143,7 +144,7 @@ class OracleSpec:
             raise ScenarioError(f"{owner}: {kind} needs 'canaries'")
         if kind == "attacker_received":
             address = params.get("address")
-            if not isinstance(address, str) or not address.endswith(".example"):
+            if not isinstance(address, str) or not _EXAMPLE_ADDRESS_RE.fullmatch(address):
                 raise ScenarioError(f"{owner}: attacker_received needs a .example 'address'")
             if not isinstance(params.get("concealed", False), bool):
                 raise ScenarioError(f"{owner}: concealed must be true or false")
@@ -340,7 +341,7 @@ class AttackScenario:
                 raise ScenarioError(f"{sid}: only a plain or seeded scenario is mutated")
             if derived_from != case + kind:
                 raise ScenarioError(f"{sid}: a mutated scenario derives from {case + kind}")
-            if transform not in PAYLOAD_MUTATIONS:
+            if not isinstance(transform, str) or transform not in PAYLOAD_MUTATIONS:
                 raise ScenarioError(f"{sid}: transform must be one of {sorted(PAYLOAD_MUTATIONS)}")
             if not isinstance(group, str) or not group.strip():
                 raise ScenarioError(f"{sid}: a mutated scenario names its parent's variant_group")
@@ -354,7 +355,7 @@ class AttackScenario:
         elif kind.startswith("-V"):
             if derived_from is not None:
                 raise ScenarioError(f"{sid}: an attack variant is authored, not derived")
-            if transform not in ATTACK_VARIANTS:
+            if not isinstance(transform, str) or transform not in ATTACK_VARIANTS:
                 raise ScenarioError(f"{sid}: transform must be one of {sorted(ATTACK_VARIANTS)}")
         elif derived_from is not None or transform is not None:
             raise ScenarioError(f"{sid}: only seeded variants and evasion inputs set a transform")
@@ -517,6 +518,10 @@ def load_attack_variants(path: Path | str, base: ScenarioCatalog) -> tuple[Attac
     return parse_attack_variants(_read_json(path), base)
 
 
+def _same_text(a: str, b: str) -> bool:
+    return a.split() == b.split()
+
+
 def parse_mutated(data: Any, parents: Iterable[AttackScenario]) -> tuple[AttackScenario, ...]:
     """Payload mutations: each keeps its parent's oracle, channel, lab and unmutated text."""
     if not isinstance(data, dict) or not isinstance(data.get("scenarios"), list):
@@ -534,6 +539,8 @@ def parse_mutated(data: Any, parents: Iterable[AttackScenario]) -> tuple[AttackS
         if s.scenario_id in seen:
             raise ScenarioError(f"duplicate scenario id {s.scenario_id}")
         seen.add(s.scenario_id)
+        if parent.channel == "indirect":
+            raise ScenarioError(f"{s.scenario_id}: an indirect attack's payload is a planted file")
         if s.oracle != parent.oracle or s.channel != parent.channel:
             raise ScenarioError(f"{s.scenario_id}: must keep its parent's oracle and channel")
         if (s.workspace_files, s.outside_files, s.doc_index) != (
@@ -545,13 +552,13 @@ def parse_mutated(data: Any, parents: Iterable[AttackScenario]) -> tuple[AttackS
         if s.group != parent.variant_group:
             raise ScenarioError(f"{s.scenario_id}: must join group {parent.variant_group}")
         if parent.mcp is None:
-            if s.mcp is not None or s.user_prompt == parent.user_prompt:
+            if s.mcp is not None or _same_text(s.user_prompt, parent.user_prompt):
                 raise ScenarioError(f"{s.scenario_id}: a direct mutation rewrites the prompt")
         else:
             m, pm = s.mcp, parent.mcp
             if m is None or (m.kind, m.tool, m.copy_to) != (pm.kind, pm.tool, pm.copy_to):
                 raise ScenarioError(f"{s.scenario_id}: must keep its parent's MCP mutation")
-            if s.user_prompt != parent.user_prompt or m.description == pm.description:
+            if s.user_prompt != parent.user_prompt or _same_text(m.description, pm.description):
                 raise ScenarioError(f"{s.scenario_id}: an MCP mutation rewrites the tool only")
         out.append(s)
     return tuple(out)
