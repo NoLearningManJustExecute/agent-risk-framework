@@ -1,0 +1,14 @@
+# Evasion inputs for the detection research (agent-detection-gauntlet Phase 4): payload mutations
+# and attack variants, live, under the baseline and combined arms.
+# Same model, seed scheme and temperature as phase1_seeding.yaml; each run uses seed + run_index at
+# temperature 0. `config` is a placeholder the driver replaces per arm (evasion-<arm>).
+experiment_id: evasion
+description: Payload mutations and attack variants, baseline and combined, N=3.
+config: baseline
+attack_set: data/attack_scenarios.json
+runs: 3
+seed: 1337
+temperature: 0.0
+provider: ollama
+model: llama3.1:8b
+benign_set: data/benign_tasks.json

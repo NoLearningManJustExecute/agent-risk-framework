@@ -65,7 +65,13 @@ from ..agent.client import connect_in_process, list_tool_defs
 from ..agent.model import ToolDef
 from ..agent.policy import STATED_POLICY
 from ..attacks.lab import apply_post_approval, build_lab_server, lab_sandbox
-from ..attacks.scenarios import AttackScenario, load_catalog, load_seeded
+from ..attacks.scenarios import (
+    AttackScenario,
+    load_attack_variants,
+    load_catalog,
+    load_mutated,
+    load_seeded,
+)
 from ..benign import BenignTask, load_benign_tasks
 from ..enums import CaseKind, DecisionAction, DecisionStage, DefenseConfig, Outcome
 from ..guardrails.integrity import DEFAULT_REGISTRY, ToolRegistry, definition_hash
@@ -193,14 +199,20 @@ class Catalog:
         benign: Path | str = DEFAULT_BENIGN,
         registry: Path | str = DEFAULT_REGISTRY,
         seeded: Path | str | None = DEFAULT_SEEDED,
+        attack_variants: Path | str | None = None,
+        mutated: Path | str | None = None,
     ) -> Catalog:
-        """The authored scenarios plus, when the file exists, the seeded variants."""
+        """The authored scenarios, the seeded variants when the file exists, and the evasion
+        catalogs when named."""
         catalog = load_catalog(scenarios)
         variants = (
             load_seeded(seeded, catalog) if seeded is not None and Path(seeded).is_file() else ()
         )
+        base = (*catalog.scenarios, *variants)
+        evasion = load_attack_variants(attack_variants, catalog) if attack_variants else ()
+        changed = load_mutated(mutated, base) if mutated else ()
         return cls(
-            {s.scenario_id: s for s in (*catalog.scenarios, *variants)},
+            {s.scenario_id: s for s in (*base, *evasion, *changed)},
             {t.task_id: t for t in load_benign_tasks(benign)},
             ToolRegistry.load(registry),
         )
@@ -513,7 +525,7 @@ def label(run: RunRecord, controls: frozenset[str], catalog: Catalog) -> dict[st
         "label": "malicious" if malicious else "benign",
         "attack_class": attack_class(scenario) if scenario else None,
         "attack_succeeded": (run.outcome == Outcome.SUCCEEDED) if malicious else None,
-        "mutation": None,
+        "mutation": scenario.evasion_label if scenario else None,
         "guardrails": "on" if controls else "off",
         "split": None,
         "source": SOURCE,
@@ -697,6 +709,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--scenarios", default=str(DEFAULT_SCENARIOS))
     parser.add_argument("--benign", default=str(DEFAULT_BENIGN))
     parser.add_argument("--seeded", default=str(DEFAULT_SEEDED))
+    parser.add_argument("--attack-variants", default=None, help="evasion: -Vnn scenario file")
+    parser.add_argument("--mutated", default=None, help="evasion: -Mnn scenario file")
     parser.add_argument(
         "--skip-unlisted",
         action="store_true",
@@ -718,7 +732,14 @@ def main(argv: list[str] | None = None) -> None:
     staging = out.with_name(out.name + ".partial")
     if staging.exists():
         parser.error(f"{staging.name} exists from an interrupted export; remove it first")
-    catalog = Catalog.load(args.scenarios, args.benign, args.registry, args.seeded)
+    catalog = Catalog.load(
+        args.scenarios,
+        args.benign,
+        args.registry,
+        args.seeded,
+        attack_variants=args.attack_variants,
+        mutated=args.mutated,
+    )
     try:
         with RunLog(db) as log:
             summary = export(
