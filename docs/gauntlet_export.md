@@ -73,7 +73,7 @@ records that, and content references can point at text the model never read.
 | `label` | `malicious` for attack scenarios, `benign` for tasks |
 | `attack_class` | the scenario family: `AC01`, `AC01-OBF` and the seeded `AC01-Snn` are all `AC01` |
 | `attack_succeeded` | the scenario's deterministic oracle (the run's `outcome`), never a detector or an LLM judge |
-| `mutation` | `null`; the `-OBF` variants are authored scenarios, recorded in `scenario_id` |
+| `mutation` | `null` for corpus scenarios (the `-OBF` variants are authored, recorded in `scenario_id`); the payload mutation or attack route of an evasion input, see [evasion_inputs.md](evasion_inputs.md) |
 | `guardrails` | `off` when no control was on, `on` otherwise (from `run_controls`) |
 | `split` | `null`; the gauntlet assigns it when it freezes the split |
 | `source` | `agent-risk-framework` |
@@ -81,7 +81,7 @@ records that, and content references can point at text the model never read.
 | `condition` | the arm: `baseline`, `combined`, or the single control switched on |
 | `source_run_id` | `<experiment>:<kind>:<case>:<run_index>` |
 | `variant_group` | the distinct input: the plain scenario for `ACnn` and `ACnn-OBF`, the variant itself for a seeded `ACnn-Snn` (or the group of its parent or a sibling when it is a near-duplicate), the task id for a benign task (see docs/corpus_seeding.md) |
-| `derived_from` | the parent scenario of a seeded variant, otherwise `null` |
+| `derived_from` | the parent scenario of a seeded variant or a payload mutation, otherwise `null` |
 
 ## Provenance
 

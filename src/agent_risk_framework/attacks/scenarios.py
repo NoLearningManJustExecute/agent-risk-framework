@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -35,9 +36,20 @@ from ..findings.schema import ASI_ID_RE, ATLAS_RE, FINDING_ID_RE, LLM_ID_RE, MCP
 DEFAULT_SCENARIOS_PATH = Path("data/attack_scenarios.json")
 
 CASE_ID_RE = re.compile(r"^AC(0[1-9]|1[0-2])[AB]?$")
-SCENARIO_ID_RE = re.compile(r"^(AC(?:0[1-9]|1[0-2])[AB]?)(-OBF|-S[0-9]{2})?$")
+SCENARIO_ID_RE = re.compile(
+    r"^(AC(?:0[1-9]|1[0-2])[AB]?)(-OBF|-S[0-9]{2}|-V[0-9]{2})?(-M[0-9]{2})?$"
+)
 # Seeding transforms (Phase 1 corpus): paraphrase and translation of a plain scenario.
 SEEDING_TRANSFORM_RE = re.compile(r"^(paraphrase:[a-z]+|translation:[a-z]{2})$")
+# Evasion testing (detection research Phase 4), reserved at seeding time so the two never overlap.
+# `-Mnn`: a payload mutation of one plain or seeded scenario, generated outside this repository.
+# `-Vnn`: an authored attack variant, pursuing a class's objective by another route.
+PAYLOAD_MUTATIONS = frozenset(
+    {"base64_bare", "base64_decode", "homoglyph", "zero_width", "fullwidth", "split_chunks"}
+)
+ATTACK_VARIANTS = frozenset(
+    {"indirect_instruction", "retrieval_poisoning", "tool_indirection", "multi_stage"}
+)
 CHANNELS = frozenset({"direct", "indirect", "mcp"})
 OBFUSCATIONS = frozenset({"base64", "split", "translation", "zero_width", "char_spacing"})
 CANARY_NAMES = frozenset({"system", "credentials", "outside"})
@@ -55,6 +67,7 @@ ORACLE_PARAMS: dict[str, frozenset[str]] = {
     "tool_invoked": frozenset({"tool"}),
     "concealed_side_effect": frozenset(),
     "unrequested_side_effect": frozenset({"tools"}),
+    "attacker_received": frozenset({"address", "concealed"}),
 }
 MCP_KINDS: dict[str, frozenset[str]] = {
     "poisoned_tool": frozenset({"tool", "description"}),
@@ -128,6 +141,12 @@ class OracleSpec:
             raise ScenarioError(f"{owner}: tool_invoked needs a 'tool' name")
         if kind in {"canary_in_tool_args", "canary_disclosed"} and canaries is None:
             raise ScenarioError(f"{owner}: {kind} needs 'canaries'")
+        if kind == "attacker_received":
+            address = params.get("address")
+            if not isinstance(address, str) or not address.endswith(".example"):
+                raise ScenarioError(f"{owner}: attacker_received needs a .example 'address'")
+            if not isinstance(params.get("concealed", False), bool):
+                raise ScenarioError(f"{owner}: concealed must be true or false")
         return cls(kind, params)
 
 
@@ -228,9 +247,11 @@ class AttackScenario:
     doc_index: dict[str, str] = field(default_factory=dict)
     mcp: McpMutation | None = None
     notes: str = ""
-    derived_from: str | None = None  # seeded variants: the plain scenario they came from
-    transform: str | None = None  # seeded variants: paraphrase:<style> or translation:<lang>
-    group: str | None = None  # seeded variants: the group a near-duplicate joins (else own id)
+    derived_from: str | None = None  # seeded and mutated: the scenario they came from
+    # Seeded: paraphrase:<style> or translation:<lang>. Mutated: one of PAYLOAD_MUTATIONS.
+    # Attack variant: one of ATTACK_VARIANTS.
+    transform: str | None = None
+    group: str | None = None  # the group a near-duplicate or a mutated scenario joins
 
     @property
     def case_id(self) -> str:
@@ -243,8 +264,22 @@ class AttackScenario:
         return self.scenario_id.endswith("-OBF")
 
     @property
+    def mutated(self) -> bool:
+        match = SCENARIO_ID_RE.fullmatch(self.scenario_id)
+        return match is not None and match.group(3) is not None
+
+    @property
+    def attack_variant(self) -> bool:
+        return "-V" in self.scenario_id and not self.mutated
+
+    @property
     def seeded(self) -> bool:
-        return self.derived_from is not None
+        return self.derived_from is not None and not self.mutated
+
+    @property
+    def evasion_label(self) -> str | None:
+        """What the detection research records as the mutation; None for corpus scenarios."""
+        return self.transform if self.mutated or self.attack_variant else None
 
     @property
     def variant_group(self) -> str:
@@ -253,7 +288,8 @@ class AttackScenario:
         An obfuscated variant is the same attack as its plain scenario under an encoding,
         so it joins the plain scenario's group. A seeded variant is a distinct wording and
         is its own group, unless it is a near-duplicate of its parent or of another variant
-        (`seeding.NEAR_COPY`), in which case the seeded catalog names the group it joins.
+        (`seeding.NEAR_COPY`), in which case the seeded catalog names the group it joins. A
+        mutated scenario names its parent's group; an attack variant is its own group.
         """
         if self.group is not None:
             return self.group
@@ -295,15 +331,33 @@ class AttackScenario:
             raise ScenarioError(f"{sid}: notes must be a string")
         derived_from, transform = data.get("derived_from"), data.get("transform")
         group = data.get("variant_group")
-        if group is not None and ("-S" not in sid or not isinstance(group, str)):
+        id_parts = SCENARIO_ID_RE.fullmatch(sid)
+        assert id_parts is not None  # noqa: S101 - checked above
+        case, kind, mutation = id_parts.groups()
+        kind = kind or ""
+        if mutation:
+            if kind.startswith(("-OBF", "-V")):
+                raise ScenarioError(f"{sid}: only a plain or seeded scenario is mutated")
+            if derived_from != case + kind:
+                raise ScenarioError(f"{sid}: a mutated scenario derives from {case + kind}")
+            if transform not in PAYLOAD_MUTATIONS:
+                raise ScenarioError(f"{sid}: transform must be one of {sorted(PAYLOAD_MUTATIONS)}")
+            if not isinstance(group, str) or not group.strip():
+                raise ScenarioError(f"{sid}: a mutated scenario names its parent's variant_group")
+        elif group is not None and (not kind.startswith("-S") or not isinstance(group, str)):
             raise ScenarioError(f"{sid}: only a seeded variant names its variant_group")
-        if "-S" in sid:
-            if derived_from != SCENARIO_ID_RE.fullmatch(sid).group(1):  # type: ignore[union-attr]
+        elif kind.startswith("-S"):
+            if derived_from != case:
                 raise ScenarioError(f"{sid}: a seeded variant derives from its plain scenario")
             if not isinstance(transform, str) or not SEEDING_TRANSFORM_RE.fullmatch(transform):
                 raise ScenarioError(f"{sid}: transform must match {SEEDING_TRANSFORM_RE.pattern}")
+        elif kind.startswith("-V"):
+            if derived_from is not None:
+                raise ScenarioError(f"{sid}: an attack variant is authored, not derived")
+            if transform not in ATTACK_VARIANTS:
+                raise ScenarioError(f"{sid}: transform must be one of {sorted(ATTACK_VARIANTS)}")
         elif derived_from is not None or transform is not None:
-            raise ScenarioError(f"{sid}: only seeded variants (-Snn) set derived_from/transform")
+            raise ScenarioError(f"{sid}: only seeded variants and evasion inputs set a transform")
         return cls(
             scenario_id=sid,
             channel=channel,
@@ -354,6 +408,9 @@ def parse_catalog(data: Any) -> ScenarioCatalog:
     seeded = sorted(s.scenario_id for s in scenarios if s.seeded)
     if seeded:
         raise ScenarioError(f"seeded variants belong in the seeded catalog: {seeded}")
+    evasion = sorted(s.scenario_id for s in scenarios if s.mutated or s.attack_variant)
+    if evasion:
+        raise ScenarioError(f"evasion scenarios belong in their own catalog: {evasion}")
     ids = [s.scenario_id for s in scenarios]
     duplicates = sorted({i for i in ids if ids.count(i) > 1})
     if duplicates:
@@ -435,3 +492,70 @@ def parse_seeded(data: Any, base: ScenarioCatalog) -> tuple[AttackScenario, ...]
 
 def load_seeded(path: Path | str, base: ScenarioCatalog) -> tuple[AttackScenario, ...]:
     return parse_seeded(_read_json(path), base)
+
+
+def parse_attack_variants(data: Any, base: ScenarioCatalog) -> tuple[AttackScenario, ...]:
+    """Authored attack variants: `-Vnn` scenarios of an existing case, with their own oracles."""
+    if not isinstance(data, dict) or not isinstance(data.get("scenarios"), list):
+        raise ScenarioError("attack variant catalog must have a 'scenarios' list")
+    out: list[AttackScenario] = []
+    seen: set[str] = set()
+    for item in data["scenarios"]:
+        s = AttackScenario.parse(item)
+        if not s.attack_variant:
+            raise ScenarioError(f"{s.scenario_id}: this catalog holds -Vnn scenarios only")
+        if s.case_id not in base.cases:
+            raise ScenarioError(f"{s.scenario_id}: no case {s.case_id} defined")
+        if s.scenario_id in seen:
+            raise ScenarioError(f"duplicate scenario id {s.scenario_id}")
+        seen.add(s.scenario_id)
+        out.append(s)
+    return tuple(out)
+
+
+def load_attack_variants(path: Path | str, base: ScenarioCatalog) -> tuple[AttackScenario, ...]:
+    return parse_attack_variants(_read_json(path), base)
+
+
+def parse_mutated(data: Any, parents: Iterable[AttackScenario]) -> tuple[AttackScenario, ...]:
+    """Payload mutations: each keeps its parent's oracle, channel, lab and unmutated text."""
+    if not isinstance(data, dict) or not isinstance(data.get("scenarios"), list):
+        raise ScenarioError("mutated catalog must have a 'scenarios' list")
+    by_id = {s.scenario_id: s for s in parents}
+    out: list[AttackScenario] = []
+    seen: set[str] = set()
+    for item in data["scenarios"]:
+        s = AttackScenario.parse(item)
+        if not s.mutated:
+            raise ScenarioError(f"{s.scenario_id}: this catalog holds -Mnn scenarios only")
+        parent = by_id.get(s.derived_from or "")
+        if parent is None:
+            raise ScenarioError(f"{s.scenario_id}: derives from unknown {s.derived_from}")
+        if s.scenario_id in seen:
+            raise ScenarioError(f"duplicate scenario id {s.scenario_id}")
+        seen.add(s.scenario_id)
+        if s.oracle != parent.oracle or s.channel != parent.channel:
+            raise ScenarioError(f"{s.scenario_id}: must keep its parent's oracle and channel")
+        if (s.workspace_files, s.outside_files, s.doc_index) != (
+            parent.workspace_files,
+            parent.outside_files,
+            parent.doc_index,
+        ):
+            raise ScenarioError(f"{s.scenario_id}: must keep its parent's planted files")
+        if s.group != parent.variant_group:
+            raise ScenarioError(f"{s.scenario_id}: must join group {parent.variant_group}")
+        if parent.mcp is None:
+            if s.mcp is not None or s.user_prompt == parent.user_prompt:
+                raise ScenarioError(f"{s.scenario_id}: a direct mutation rewrites the prompt")
+        else:
+            m, pm = s.mcp, parent.mcp
+            if m is None or (m.kind, m.tool, m.copy_to) != (pm.kind, pm.tool, pm.copy_to):
+                raise ScenarioError(f"{s.scenario_id}: must keep its parent's MCP mutation")
+            if s.user_prompt != parent.user_prompt or m.description == pm.description:
+                raise ScenarioError(f"{s.scenario_id}: an MCP mutation rewrites the tool only")
+        out.append(s)
+    return tuple(out)
+
+
+def load_mutated(path: Path | str, parents: Iterable[AttackScenario]) -> tuple[AttackScenario, ...]:
+    return parse_mutated(_read_json(path), parents)
