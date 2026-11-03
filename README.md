@@ -191,8 +191,8 @@ Requires Python 3.12. The test suite needs no model and no network.
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements-lock.txt
+python -m pip install --no-deps -e .
 python -m pytest
 ruff format --check . && ruff check .
 pip-audit --skip-editable
@@ -225,6 +225,28 @@ How long each command takes:
 - **The ablation** is 5,520 runs, about three hours on one machine. A finished arm is
   skipped on a rerun.
 - **The report command** rebuilds the Phase 4 tables and chart from the database.
+
+## Reproducibility
+
+- **Python:** 3.12.15 in CI on Linux, 3.12.10 on Windows, where no later 3.12 build exists.
+- **Packages:** `requirements-lock.txt` holds every package, direct and transitive, at one exact version
+  with sha256 hashes, for Linux and Windows. `pyproject.toml` pins the direct ones to the same versions
+  and the build backend to `setuptools==84.2.1` (exact version, not hash-checked). To change a pin, edit
+  `pyproject.toml` and re-run the command in the lockfile's header with `uv` installed.
+- **Model:** `llama3.1:8b`, digest
+  `46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e`, temperature 0, on a local Ollama. I
+  did not record the Ollama server version. Fixed seeds and temperature make runs repeatable on one
+  machine, not bit-identical across hardware or Ollama versions.
+
+Expected outputs:
+- **`python -m pytest`:** no failures, no model, no network. CI gets 826 passed on both operating
+  systems. A symlink test skips on a Windows host without that permission.
+- **`python -m agent_risk_framework.demo --fake`:** fake provider, no model. The undefended arm ends in
+  a successful attack, and `tool_permissions` and `combined` end in `ATTACK BLOCKED`.
+- **A live ablation:** the table in [docs/phase4_ablation.md](docs/phase4_ablation.md). That was measured
+  once, about three hours, before this lockfile existed, so its package versions are not necessarily
+  the ones locked here. I have not re-run it on the locked set, so treat a match as something to check,
+  not something promised.
 
 ## Demo
 

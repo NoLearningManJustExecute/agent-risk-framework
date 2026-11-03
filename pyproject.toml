@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==84.2.1"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,22 +12,21 @@ license-files = ["LICENSE"]
 authors = [{ name = "RJ" }]
 requires-python = ">=3.12"
 dependencies = [
-    "PyYAML>=6.0.2",
+    "PyYAML==6.0.3",
     # The agent's tools run behind a real MCP server (stdio); the loop drives an
     # async MCP client. anyio ships with mcp and is imported directly by the loop.
-    "mcp>=2.3,<3",
-    "anyio>=4.15,<5",
+    "mcp==2.3.0",
+    "anyio==4.16.0",
 ]
 
 [project.optional-dependencies]
-# Upper bounds keep CI from going red on a tool release alone (formatter or
-# deprecation-warning changes); bump them deliberately.
+# Exact pins, matched by requirements-lock.txt. Bump them deliberately.
 dev = [
-    "pytest>=9.0,<10",
-    "ruff>=0.17,<0.18",
-    "pip-audit>=2.9,<3",
+    "pytest==9.2.0",
+    "ruff==0.17.3",
+    "pip-audit==2.10.1",
     # Validates gauntlet exports against the schema files copied into tests/fixtures.
-    "jsonschema>=4.23,<5",
+    "jsonschema==4.26.0",
 ]
 
 [tool.setuptools.packages.find]

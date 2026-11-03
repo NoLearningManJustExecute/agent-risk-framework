@@ -5,7 +5,8 @@
 ```sh
 python -m venv .venv
 . .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements-lock.txt
+python -m pip install --no-deps -e .
 git config core.hooksPath .githooks
 ```
 
