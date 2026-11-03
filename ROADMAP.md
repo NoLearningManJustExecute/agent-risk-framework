@@ -1,6 +1,6 @@
 # agent-risk-framework: Roadmap
 
-Companion to rag-attack-lab. Project 1 proves the vulnerabilities; project 2 builds a tool-using LLM agent and defends it, then **measures** how well each defense works.
+One of three projects: rag-attack-lab attacks, this one defends, agent-detection-gauntlet detects. Project 1 proves the vulnerabilities; project 2 builds a tool-using LLM agent and defends it, then **measures** how well each defense works.
 
 Framework mapping (primary → secondary → tertiary):
 - **OWASP Top 10 for Agentic Applications 2026** (ASI01-ASI10, published 2025-12-09): primary
@@ -61,22 +61,22 @@ Result:
 - **Honest zeros.**
   - `output_classifier`'s 40 credits are interception on cases that score 0% at baseline (0 pp).
   - `egress_filter` stopped only AC12A alone (-4 pp), and `combined` pre-empts it entirely.
-  - At temp 0 each case is 10/10 or 0/10, so N=10 shows repeatability, not spread.
+  - At temp 0 attack success per case is 10/10 or 0/10, so N=10 shows repeatability, not spread. Two inputs varied across runs: AC07-OBF under `combined` (9 blocked, 1 `did_not_execute`) and benign task BT-006 under `approval_gate` and `combined`.
 
 The table and chart are generated from the run log. Details in `docs/phase4_ablation.md`.
 
-### Phase 5: Portfolio release (release prep DONE, publish pending)
+### Phase 5: Portfolio release (DONE)
 README · PDF findings report · threat model · architecture diagram · screenshots · demo recording · publish.
 Gate: evidence for every claim · reproducible · public-ready (secret scanning + push protection on, private vuln reporting on, topics added).
-Result, release prep on the private repository:
+Result:
 - **Privacy audit.** The working tree, every commit, every commit message, the pre-squash PR commits and the PR text were scanned for local paths, the machine user name, personal email, personal names, the host name and real secrets. Clean.
 - **README.** Rewritten to portfolio standard. It leads with the per-control result, adds an architecture diagram and an in-loop vs proxy note, a findings table with severity and retest, limitations and lessons learned.
 - **FPR framing.** True false positives and desired blocks are separated in the generated Phase 4 tables and in the chart.
 - **PDF findings report.** `docs/report/agent-risk-framework-findings.pdf`, generated from the findings and the run log (`findings.report`).
-- **Demo.** A live AC01 run rendered as an animated terminal, with capture instructions for a screen recording (`docs/demo.md`).
+- **Demo.** A live AC01 run recorded as a terminal GIF and rendered as an animated terminal (`docs/demo.md`).
 - **Audit-log export.** The decision log exports as OpenTelemetry-shaped JSONL (`runlog.export`).
 - **LLM Top 10 2026 IDs.** Verified against the official OWASP document (Version 2026, August 4th, 2026).
-- **Not done here.** Making the repository public and turning on public-only settings is left to the owner's audit.
+- **Published.** The repository is public, with a landing page on GitHub Pages. Secret scanning, push protection and private vulnerability reporting are on, and topics are added.
 
 ---
 

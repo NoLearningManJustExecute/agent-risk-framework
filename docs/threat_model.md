@@ -1,8 +1,9 @@
 # Threat Model
 
-Status: Phase 0 draft, controls updated in Phase 3. It covers the agent that
-Phases 1-3 built, so the measurement rig, attack cases, and controls all trace back
-to one document.
+Status: current for the published release. Written in Phase 0, controls updated in
+Phases 3 and 3.5, LLM IDs verified in Phase 5. It covers the agent that Phases 1-3
+built, so the measurement rig, attack cases, and controls all trace back to one
+document.
 
 ## 1. System overview
 

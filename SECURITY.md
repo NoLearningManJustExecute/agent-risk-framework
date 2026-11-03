@@ -3,7 +3,7 @@
 ## Scope
 
 `agent-risk-framework` is a local, offline research lab. It deliberately builds a
-vulnerable tool-using agent (in later phases) so that attacks and defenses can be
+vulnerable tool-using agent so that attacks and defenses can be
 measured. The intentionally vulnerable configurations (for example `baseline`) are
 **not** bugs; they are the control group of each experiment.
 
@@ -23,10 +23,9 @@ Out of scope:
 
 ## Reporting a vulnerability
 
-Please use GitHub's private vulnerability reporting
-(**Security → Report a vulnerability**) on this repository once it is public. Until
-then, contact the maintainer through their GitHub profile. Do not open a public issue
-for anything that could expose real data.
+Please use GitHub's private vulnerability reporting (**Security** tab, **Report a
+vulnerability**) on this repository. Do not open a public issue for anything that
+could expose real data.
 
 You can expect an acknowledgement within 7 days.
 
