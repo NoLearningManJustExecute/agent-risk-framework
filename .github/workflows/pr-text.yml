@@ -38,11 +38,14 @@ jobs:
           LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python tools/leak_guard.py --pr
-      # CI=false is the guard's no-list path: generic rules only, after its warning. This step's
-      # environment does not hold the secret.
+      # A placeholder stands in for the list. Its hash matches nothing, and it keeps the guard in
+      # its CI output form, which prints rule and location only, never a fragment of a match.
       - name: Scan pull request text, generic rules only (everyone else)
         if: github.event.sender.login != 'NoLearningManJustExecute'
         env:
-          CI: "false"
+          LEAK_DENYLIST: |
+            salt 00
+            maxwords 1
+            hash 0000000000000000000000000000000000000000000000000000000000000000
           GITHUB_TOKEN: ${{ github.token }}
         run: python tools/leak_guard.py --pr

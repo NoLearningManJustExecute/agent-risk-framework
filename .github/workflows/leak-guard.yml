@@ -75,15 +75,17 @@ jobs:
           else
             python "$LEAK_GUARD" --root . --range "$PUSH_BEFORE..$PUSH_AFTER"
           fi
-      # pr-text.yml runs other people's comments this way. A comment event only runs from the
-      # default branch, so this is where a change can show the path still works on a runner.
-      - name: The generic-only path runs without the private list
+      # pr-text.yml scans other people's comments with this placeholder in place of the secret.
+      # This shows that path working on a runner, against real pull request text.
+      - name: The placeholder-list path runs on pull request text
+        if: github.event_name == 'pull_request'
         env:
-          CI: "false"
-        run: |
-          output=$(python tools/leak_guard.py --root . --text README.md 2>&1)
-          echo "$output" | tail -n 1
-          echo "$output" | grep -q "no denylist"
+          LEAK_DENYLIST: |
+            salt 00
+            maxwords 1
+            hash 0000000000000000000000000000000000000000000000000000000000000000
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/leak_guard.py --root . --pr
       - name: Scan pull request text
         if: github.event_name == 'pull_request'
         env:
