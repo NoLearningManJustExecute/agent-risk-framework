@@ -241,7 +241,7 @@ How long each command takes:
   machine, not bit-identical across hardware or Ollama versions.
 
 Expected outputs:
-- **`python -m pytest`:** no failures, no model, no network. CI gets 828 passed on both operating
+- **`python -m pytest`:** no failures, no model, no network. CI gets 831 passed on both operating
   systems. A symlink test skips on a Windows host without that permission.
 - **`python -m agent_risk_framework.demo --fake`:** fake provider, no model. The undefended arm ends in
   a successful attack, and `tool_permissions` and `combined` end in `ATTACK BLOCKED`.
@@ -253,13 +253,15 @@ Expected outputs:
 ## Demo
 
 [docs/demo.md](docs/demo.md): AC01 against the undefended agent, then with
-`tool_permissions`, then with all six controls. This is a terminal recording of a
-live run against a local `llama3.1:8b`, recorded with `vhs` from
-[docs/demo/demo.tape](docs/demo/demo.tape). Nothing in it is scripted or edited.
+`tool_permissions`, then the measured Phase 4 result. This is a terminal recording of
+a live run against a local `llama3.1:8b`, recorded with `vhs` from
+[docs/assets/demo.tape](docs/assets/demo.tape). The two AC01 runs happen on camera.
+The last step prints the committed Phase 4 table; it does not repeat the 5,520 runs.
 
-![Recording: AC01 succeeds undefended, then is blocked by tool_permissions and by all six controls](docs/demo/demo.gif)
+![Recording: AC01 succeeds undefended, is blocked by tool_permissions, then the Phase 4 attack success and false positive numbers](docs/assets/demo.gif)
 
-The same run as an animated SVG transcript: [docs/demo/demo.svg](docs/demo/demo.svg).
+An animated SVG transcript of an earlier AC01 run, which also shows all six controls:
+[docs/demo/demo.svg](docs/demo/demo.svg).
 
 ## Audit-log export
 
