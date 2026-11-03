@@ -697,6 +697,45 @@ def test_pr_scan(
     assert sum("/issues/7/comments" in url for url in calls) == 2
 
 
+def test_pr_scan_without_the_list_runs_generic_rules_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_get(url: str, token: str) -> Any:
+        if url.endswith("/pulls/7"):
+            return {"title": "Phase work", "body": "mail " + "alex" + AT + "gmail.com"}
+        if "/issues/7/comments" in url:
+            return [{"id": 900, "body": SECRET_WORD}]
+        return [{"id": 6, "body": "a " + chr(0x2014) + " b"}]
+
+    monkeypatch.setattr(leak_guard, "http_get_json", fake_get)
+    env = {
+        "CI": "false",
+        "GITHUB_TOKEN": "t0ken",
+        "GITHUB_REPOSITORY": "owner/repo",
+        "GITHUB_EVENT_PATH": event_file(tmp_path, {"pull_request": {"number": 7}}),
+    }
+    code, output = run_guard(["--root", str(tmp_path), "--pr"], env, capsys)
+    assert code == 1
+    assert "pr body:1: email-address" in output
+    assert "dash-character" in output
+    assert "denylist: private identifier" not in output
+    assert "hash #" not in output
+    assert "no denylist" in output
+
+
+def test_pr_text_workflow_gives_the_private_list_only_to_the_owner() -> None:
+    workflow = Path(__file__).resolve().parent.parent / ".github/workflows/pr-text.yml"
+    text = workflow.read_text(encoding="utf-8")
+    assert text.count("secrets.") == 1
+    assert text.count("run: python tools/leak_guard.py --pr") == 2
+    owner, others = text.split("generic rules only (everyone else)")
+    assert "if: github.event.sender.login == 'NoLearningManJustExecute'" in owner
+    assert "LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}" in owner
+    assert "if: github.event.sender.login != 'NoLearningManJustExecute'" in others
+    assert 'CI: "false"' in others
+    assert "LEAK_DENYLIST" not in others
+
+
 def test_pr_scan_setup_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

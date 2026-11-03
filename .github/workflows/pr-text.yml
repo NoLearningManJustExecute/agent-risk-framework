@@ -30,8 +30,19 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - name: Scan pull request text
+      # The private list catches the owner's identifiers in what the owner writes. On anyone else's
+      # comment it would only let them confirm a guess from a red run, so it stays off there.
+      - name: Scan pull request text, with the private list (owner)
+        if: github.event.sender.login == 'NoLearningManJustExecute'
         env:
           LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/leak_guard.py --pr
+      # CI=false is the guard's no-list path: generic rules only, after its warning. This step's
+      # environment does not hold the secret.
+      - name: Scan pull request text, generic rules only (everyone else)
+        if: github.event.sender.login != 'NoLearningManJustExecute'
+        env:
+          CI: "false"
           GITHUB_TOKEN: ${{ github.token }}
         run: python tools/leak_guard.py --pr

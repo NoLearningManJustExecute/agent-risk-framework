@@ -160,7 +160,10 @@ cutoff <40 hex commit>
 - The `Leak guard full scan` workflow runs `--all` against the baseline every week and on demand.
   It does not block merges.
 - The `PR text guard` workflow runs `--pr` again whenever a comment or review is posted or edited,
-  always with the default branch's copy of the guard.
+  always with the default branch's copy of the guard. The private list is used only when the owner
+  triggered the event. For anyone else the step gets no secret and sets `CI=false`, so generic rules
+  still run and a guessed identifier cannot be confirmed from a failed run. A run the owner triggers
+  scans the whole pull request, including earlier comments by others.
 - Pull requests from forks get no secrets, so the CI guard fails closed (exit 2) on them.
 - Every push to main runs in its own concurrency group, so no pushed range is cancelled or
   skipped while queued. Pull request runs replace each other.
