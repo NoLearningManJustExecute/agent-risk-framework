@@ -228,10 +228,12 @@ How long each command takes:
 
 ## Reproducibility
 
-- **Python:** 3.12.15 in CI on Linux, 3.12.10 on Windows, where no later 3.12 build exists.
+- **Python:** in the CI jobs that install packages, 3.12.15 on Linux and 3.12.10 on Windows, where no
+  later 3.12 build exists.
 - **Packages:** `requirements-lock.txt` holds every package, direct and transitive, at one exact version
   with sha256 hashes, for Linux and Windows. `pyproject.toml` pins the direct ones to the same versions
-  and the build backend to `setuptools==84.2.1` (exact version, not hash-checked). To change a pin, edit
+  and the build backend to `setuptools==84.2.1` (exact version, not hash-checked). A test fails if the
+  two disagree. To change a pin, edit
   `pyproject.toml` and re-run the command in the lockfile's header with `uv` installed.
 - **Model:** `llama3.1:8b`, digest
   `46e0c10c039e019119339687c3c1757cc81b9da49709a3b3924863ba87ca666e`, temperature 0, on a local Ollama. I
@@ -239,7 +241,7 @@ How long each command takes:
   machine, not bit-identical across hardware or Ollama versions.
 
 Expected outputs:
-- **`python -m pytest`:** no failures, no model, no network. CI gets 826 passed on both operating
+- **`python -m pytest`:** no failures, no model, no network. CI gets 828 passed on both operating
   systems. A symlink test skips on a Windows host without that permission.
 - **`python -m agent_risk_framework.demo --fake`:** fake provider, no model. The undefended arm ends in
   a successful attack, and `tool_permissions` and `combined` end in `ATTACK BLOCKED`.
