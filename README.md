@@ -8,11 +8,12 @@ legitimate work.
 
 Live demo: https://nolearningmanjustexecute.github.io/agent-risk-framework/
 
-Defense companion to [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab):
-that project demonstrates RAG weaknesses; this one measures defenses for agents.
+One of three projects: [rag-attack-lab](https://github.com/NoLearningManJustExecute/rag-attack-lab)
+attacks, this repo defends, [agent-detection-gauntlet](https://github.com/NoLearningManJustExecute/agent-detection-gauntlet)
+detects.
 
-> **Status:** built and measured (Phases 0 to 4); release prep in Phase 5. Everything
-> runs locally against a local model, on synthetic data only.
+> **Status:** built, measured and published (Phases 0 to 5). Everything runs locally
+> against a local model, on synthetic data only.
 
 ## Headline
 
@@ -170,6 +171,9 @@ covers each finding with evidence, impact and remediation.
 | OWASP MCP Top 10 | `MCP01:2025` to `MCP10:2025` | Beta: IDs may be renumbered |
 | MITRE ATLAS | technique IDs (for example `AML.T0051.000`) | Per threat |
 
+ATLAS IDs are as of content release 2026.09. Content release 2026.10 moved `AML.T0056`
+(used here for AC04) to `AML.T0085.003`; the IDs in this repository are not migrated.
+
 The LLM 2026 IDs used here, with their official titles:
 - `LLM01` Prompt Injection
 - `LLM02` Sensitive Information Disclosure
@@ -187,6 +191,7 @@ Requires Python 3.12. The test suite needs no model and no network.
 ```bash
 python -m venv .venv
 # Windows: .venv\Scripts\activate    Linux/macOS: source .venv/bin/activate
+python -m pip install --upgrade pip
 python -m pip install -e ".[dev]"
 python -m pytest
 ruff format --check . && ruff check .
@@ -212,7 +217,11 @@ python -m agent_risk_framework.attacks.ablation_report --db runs/phase4.db
 ```
 
 How long each command takes:
-- **The Phase 2 baseline** is 690 runs at N=10.
+- **The Phase 2 baseline** command runs the committed manifest: 24 scenarios and 62
+  benign tasks at N=10, 860 runs. [docs/phase2_results.md](docs/phase2_results.md) is
+  the original measurement: 26 scenarios and 12 tasks, 380 runs. The sets changed after
+  it, so this command as written overwrites that report and `findings/` with results
+  from different sets. Point `--report` and `--findings-dir` elsewhere to keep them.
 - **The ablation** is 5,520 runs, about three hours on one machine. A finished arm is
   skipped on a rerun.
 - **The report command** rebuilds the Phase 4 tables and chart from the database.
@@ -259,9 +268,11 @@ The chain per run:
 ## Limitations
 
 - **One model, deterministic decoding.** Everything is `llama3.1:8b` at temperature
-  0. N=10 shows repeatability, not spread: every case landed 10/10 or 0/10 except
-  one. The independent units are 24 scenarios and 45 tasks, so a confidence interval
-  over runs would be falsely narrow.
+  0. N=10 shows repeatability, not spread: attack success per case was 10/10 or 0/10
+  in every arm. Two inputs varied across runs: AC07-OBF under `combined` (9 blocked, 1
+  `did_not_execute`, 0/10 attack success) and benign task BT-006 under `approval_gate`
+  and `combined`. The independent units are 24 scenarios and 45 tasks, so a confidence
+  interval over runs would be falsely narrow.
 - **Small attack and benign sets,** written by me. The benign set was grown to 45
   tasks (30 adversarial-looking but legitimate) before the run. The classifier's
   false positives on it were pinned first; nothing was retuned afterwards.
@@ -310,6 +321,7 @@ The chain per run:
 | 3.5 | Egress filter: the sixth control | [phase3_5_egress.md](docs/phase3_5_egress.md) |
 | 4 | Defense ablation: eight arms, N=10 | [phase4_ablation.md](docs/phase4_ablation.md) |
 | 5 | Release prep: README, PDF report, demo, audit-log export | [demo.md](docs/demo.md), [findings report](docs/report/agent-risk-framework-findings.pdf) |
+| After 5 | Inputs for detection research: gauntlet trace export, seeded attack wordings, evasion inputs | [gauntlet_export.md](docs/gauntlet_export.md), [corpus_seeding.md](docs/corpus_seeding.md), [evasion_inputs.md](docs/evasion_inputs.md) |
 
 Build history and results per phase: [ROADMAP.md](ROADMAP.md).
 

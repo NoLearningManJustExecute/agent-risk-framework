@@ -1,4 +1,4 @@
-"""Export the run log as gauntlet traces and labels (agent-detection-gauntlet schema 0.2).
+"""Export the run log as gauntlet traces and labels (agent-detection-gauntlet schema 0.3).
 
 One run becomes one trace; each line is one event. Per run, in order:
 
