@@ -166,6 +166,9 @@ cutoff <40 hex commit>
   confirmed from a failed run. A run the owner triggers scans the whole pull request, including
   earlier comments by others. That residual is accepted: closing it needs a per-author filter in
   this guard.
-- Pull requests from forks get no secrets, so the CI guard fails closed (exit 2) on them.
+- Dependabot and fork pull requests get no secrets. The CI guard gives every event the owner did not
+  trigger generic rules only, through the same placeholder list, so those pull requests can pass.
+  Their commits are scanned with the private list on the push to main when the owner merges them. If
+  the owner triggers a run and the secret is missing, the guard still fails closed (exit 2).
 - Every push to main runs in its own concurrency group, so no pushed range is cancelled or
   skipped while queued. Pull request runs replace each other.

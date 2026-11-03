@@ -59,9 +59,33 @@ jobs:
             echo "leak guard source: $base"
           fi
           echo "LEAK_GUARD=$guard" >> "$GITHUB_ENV"
-      - name: Scan new commits
+      # The private list runs only when the owner triggered the event, as in pr-text.yml. Dependabot
+      # and fork pull requests get no secrets, so they get generic rules from a placeholder list. Their
+      # commits are scanned with the private list on the push to main when the owner merges them.
+      - name: Scan new commits, with the private list (owner)
+        if: github.event.sender.login == 'NoLearningManJustExecute'
         env:
           LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            python "$LEAK_GUARD" --root . --range "$PR_BASE..$PR_HEAD"
+          elif [ -z "$PUSH_BEFORE" ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            python "$LEAK_GUARD" --root . --history
+          else
+            python "$LEAK_GUARD" --root . --range "$PUSH_BEFORE..$PUSH_AFTER"
+          fi
+      - name: Scan new commits, generic rules only (everyone else)
+        if: github.event.sender.login != 'NoLearningManJustExecute'
+        env:
+          LEAK_DENYLIST: |
+            salt 00
+            maxwords 1
+            hash 0000000000000000000000000000000000000000000000000000000000000000
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
@@ -86,15 +110,36 @@ jobs:
             hash 0000000000000000000000000000000000000000000000000000000000000000
           GITHUB_TOKEN: ${{ github.token }}
         run: python "$LEAK_GUARD" --root . --pr
-      - name: Scan pull request text
-        if: github.event_name == 'pull_request'
+      # Everyone else's text is scanned by the placeholder step above.
+      - name: Scan pull request text, with the private list (owner)
+        if: github.event_name == 'pull_request' && github.event.sender.login == 'NoLearningManJustExecute'
         env:
           LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python "$LEAK_GUARD" --root . --pr
-      - name: Scan committed generated outputs
+      - name: Scan committed generated outputs, with the private list (owner)
+        if: github.event.sender.login == 'NoLearningManJustExecute'
         env:
           LEAK_DENYLIST: ${{ secrets.LEAK_DENYLIST }}
+        run: |
+          args=()
+          outputs="findings/* docs/report/* docs/phase2_results.md docs/phase4_ablation.md"
+          outputs="$outputs docs/phase4_ablation.svg docs/demo/*"
+          for file in $outputs; do
+            if [ -f "$file" ]; then args+=(--text "$file"); fi
+          done
+          if [ "${#args[@]}" -gt 0 ]; then
+            python "$LEAK_GUARD" --root . "${args[@]}"
+          else
+            echo "no committed outputs to scan"
+          fi
+      - name: Scan committed generated outputs, generic rules only (everyone else)
+        if: github.event.sender.login != 'NoLearningManJustExecute'
+        env:
+          LEAK_DENYLIST: |
+            salt 00
+            maxwords 1
+            hash 0000000000000000000000000000000000000000000000000000000000000000
         run: |
           args=()
           outputs="findings/* docs/report/* docs/phase2_results.md docs/phase4_ablation.md"
