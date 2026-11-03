@@ -742,12 +742,17 @@ def test_pr_scan_with_the_placeholder_prints_rule_and_location_only(
 
 def test_pr_text_workflow_gives_the_private_list_only_to_the_owner() -> None:
     text = _pr_text_workflow()
-    assert text.count("secrets") == 1
+    assert text.lower().count("secrets") == 1
     assert len(re.findall(r"run: python tools/leak_guard\.py --pr$", text, re.MULTILINE)) == 2
+    assert text.count("actions/checkout") == 1
+    assert "if: github.event.issue.pull_request || github.event.pull_request" in text
+    # Each of these would change what the guard reads or take it out of its CI output form.
+    assert "GITHUB_ENV" not in text
+    assert "LEAK_DENYLIST_FILE" not in text
+    assert not re.search(r"""^\s*["']?CI["']?\s*:""", text, re.MULTILINE)
     # Step level only: a workflow or job env would reach both steps.
     assert re.findall(r"^( *)env:", text, re.MULTILINE) == [" " * 8, " " * 8]
     assert "ref: ${{ github.event.repository.default_branch }}" in text
-    assert "CI:" not in text
     owner, others = text.split("generic rules only (everyone else)")
     sender = r"^ +if: github\.event\.sender\.login {} 'NoLearningManJustExecute'$"
     assert re.search(sender.format("=="), owner, re.MULTILINE)
@@ -755,6 +760,17 @@ def test_pr_text_workflow_gives_the_private_list_only_to_the_owner() -> None:
     assert re.search(sender.format("!="), others, re.MULTILINE)
     placeholder = Denylist.parse(_placeholder_list(text))
     assert list(placeholder.entries) == ["0" * 64]
+
+
+def test_job_proves_the_placeholder_path_with_the_base_branch_guard() -> None:
+    folder = Path(__file__).resolve().parent.parent / ".github/workflows"
+    job = folder / "leak-guard.yml"
+    text = (job if job.is_file() else folder / "ci.yml").read_text(encoding="utf-8")
+    step = text.split("The placeholder-list path runs on pull request text")[1].split("- name:")[0]
+    assert 'run: python "$LEAK_GUARD" --root . --pr' in step
+    assert "tools/leak_guard.py" not in step
+    assert "secrets" not in step.lower()
+    assert _placeholder_list(_pr_text_workflow()).splitlines()[-1] in step
 
 
 def test_pr_scan_setup_errors(

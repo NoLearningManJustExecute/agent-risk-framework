@@ -85,7 +85,7 @@ jobs:
             maxwords 1
             hash 0000000000000000000000000000000000000000000000000000000000000000
           GITHUB_TOKEN: ${{ github.token }}
-        run: python tools/leak_guard.py --root . --pr
+        run: python "$LEAK_GUARD" --root . --pr
       - name: Scan pull request text
         if: github.event_name == 'pull_request'
         env:

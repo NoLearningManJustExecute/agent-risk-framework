@@ -66,7 +66,7 @@ These patterns contain nothing personal and live in the guard itself.
   baselined.
 
 A hit prints the location and rule. Locally it also shows the match with its middle masked; in CI
-(`CI=true`) it shows the rule and location only. A file whose own name holds a match or a private
+(`CI=true`) a generic hit shows the rule and location only. A file whose own name holds a match or a private
 identifier is shown as `<path withheld ...>` with a short digest instead of its name.
 
 ## Private denylist
