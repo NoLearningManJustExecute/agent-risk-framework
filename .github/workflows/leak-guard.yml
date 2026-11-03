@@ -75,6 +75,17 @@ jobs:
           else
             python "$LEAK_GUARD" --root . --range "$PUSH_BEFORE..$PUSH_AFTER"
           fi
+      # pr-text.yml scans other people's comments with this placeholder in place of the secret.
+      # This shows that path working on a runner, against real pull request text.
+      - name: The placeholder-list path runs on pull request text
+        if: github.event_name == 'pull_request'
+        env:
+          LEAK_DENYLIST: |
+            salt 00
+            maxwords 1
+            hash 0000000000000000000000000000000000000000000000000000000000000000
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python "$LEAK_GUARD" --root . --pr
       - name: Scan pull request text
         if: github.event_name == 'pull_request'
         env:

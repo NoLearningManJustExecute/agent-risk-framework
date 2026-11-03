@@ -66,7 +66,7 @@ These patterns contain nothing personal and live in the guard itself.
   baselined.
 
 A hit prints the location and rule. Locally it also shows the match with its middle masked; in CI
-(`CI=true`) it shows the rule and location only. A file whose own name holds a match or a private
+(`CI=true`) a generic hit shows the rule and location only. A file whose own name holds a match or a private
 identifier is shown as `<path withheld ...>` with a short digest instead of its name.
 
 ## Private denylist
@@ -160,7 +160,12 @@ cutoff <40 hex commit>
 - The `Leak guard full scan` workflow runs `--all` against the baseline every week and on demand.
   It does not block merges.
 - The `PR text guard` workflow runs `--pr` again whenever a comment or review is posted or edited,
-  always with the default branch's copy of the guard.
+  always with the default branch's copy of the guard. The private list is used only when the owner
+  triggered the event. For anyone else the step gets a placeholder list in place of the secret, so
+  generic rules still run, printing rule and location only, and a guessed identifier cannot be
+  confirmed from a failed run. A run the owner triggers scans the whole pull request, including
+  earlier comments by others. That residual is accepted: closing it needs a per-author filter in
+  this guard.
 - Pull requests from forks get no secrets, so the CI guard fails closed (exit 2) on them.
 - Every push to main runs in its own concurrency group, so no pushed range is cancelled or
   skipped while queued. Pull request runs replace each other.
