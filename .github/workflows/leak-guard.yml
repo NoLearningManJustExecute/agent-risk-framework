@@ -124,7 +124,7 @@ jobs:
         run: |
           args=()
           outputs="findings/* docs/report/* docs/phase2_results.md docs/phase4_ablation.md"
-          outputs="$outputs docs/phase4_ablation.svg docs/demo/*"
+          outputs="$outputs docs/phase4_ablation.svg docs/demo/* docs/assets/*"
           for file in $outputs; do
             if [ -f "$file" ]; then args+=(--text "$file"); fi
           done
@@ -143,7 +143,7 @@ jobs:
         run: |
           args=()
           outputs="findings/* docs/report/* docs/phase2_results.md docs/phase4_ablation.md"
-          outputs="$outputs docs/phase4_ablation.svg docs/demo/*"
+          outputs="$outputs docs/phase4_ablation.svg docs/demo/* docs/assets/*"
           for file in $outputs; do
             if [ -f "$file" ]; then args+=(--text "$file"); fi
           done

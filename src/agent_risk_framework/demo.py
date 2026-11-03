@@ -13,6 +13,7 @@ The transcript is the demo. `--svg` also renders it as an animated terminal SVG
     python -m agent_risk_framework.demo --fake               # offline, scripted model
     python -m agent_risk_framework.demo --transcript docs/demo/transcript.txt \
         --svg docs/demo/demo.svg
+    python -m agent_risk_framework.demo --results            # the measured Phase 4 result
 """
 
 from __future__ import annotations
@@ -37,10 +38,13 @@ ARMS: dict[str, GuardrailConfig] = {
     "combined": GuardrailConfig.preset("combined"),
 }
 WIDTH = 96
+RESULTS_DOC = Path("docs") / "phase4_ablation.md"
+RESULTS_TABLE = "### Security vs usefulness, per arm"
+RESULTS_ARMS = ("baseline", "tool_permissions", "input_classifier")
 
 
 class _Scripted(FakeToolModel):
-    """Offline stand-in that does what the live model does on AC01: read, then send."""
+    """Offline stand-in for AC01: it reads the file, then sends it to the outside address."""
 
     def __init__(self) -> None:
         to = "partner@outside-firm.example"
@@ -143,6 +147,43 @@ async def run_demo(
     return lines
 
 
+def measured_results(doc: str) -> list[str]:
+    """The headline comparison, read from the committed Phase 4 table and never retyped."""
+    _, found, section = doc.partition(RESULTS_TABLE)
+    if not found:
+        raise ValueError("no results table")
+    rows: list[list[str]] = []
+    for line in section.strip().splitlines():
+        if not line.startswith("|"):
+            break
+        rows.append([cell.strip().strip("*`") for cell in line.strip("|").split("|")])
+    if not rows:
+        raise ValueError("empty results table")
+    header = rows[0]
+    by_arm = {row[0]: dict(zip(header, row, strict=False)) for row in rows[1:]}
+    lines = [
+        f"Phase 4, all 24 attack scenarios and 45 benign tasks, from {RESULTS_DOC.as_posix()}:",
+        "",
+        f"  {'arm':<19}{'attack success':<17}{'any block':<13}"
+        f"{'true false positives':<23}task success",
+    ]
+    for arm in RESULTS_ARMS:
+        if arm not in by_arm:
+            raise ValueError(f"no row for {arm}")
+        row = by_arm[arm]
+        lines.append(
+            f"  {arm:<19}{row['Attack success']:<17}{row['FPR (any block)']:<13}"
+            f"{row['Benign lost to a control']:<23}{row['Task success']}"
+        )
+    lines += [
+        "",
+        "Lower attack success is better. Any block: a control blocked something in a benign run.",
+        "True false positive: that block lost the user's task.",
+        "One model at temperature 0, N=10 per case: that shows repeatability, not spread.",
+    ]
+    return lines
+
+
 def render_svg(lines: Sequence[str], *, seconds: float = 120.0, animate: bool = True) -> str:
     """An animated terminal: each line fades in on its turn; blank lines are pauses.
 
@@ -209,7 +250,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--transcript", default="", help="also write the transcript here")
     parser.add_argument("--svg", default="", help="also render an animated SVG here")
     parser.add_argument("--still", default="", help="also render the final frame here")
+    parser.add_argument(
+        "--results", action="store_true", help="print the measured Phase 4 result and exit"
+    )
     args = parser.parse_args(argv)
+
+    if args.results:
+        try:
+            summary = measured_results(RESULTS_DOC.read_text(encoding="utf-8"))
+        except (OSError, ValueError, KeyError):
+            parser.error(f"cannot read the results table in {RESULTS_DOC.as_posix()}")
+        sys.stdout.write("\n".join(summary) + "\n")
+        return
 
     catalog = {s.scenario_id: s for s in load_catalog().scenarios}
     if args.case not in catalog:
@@ -222,7 +274,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     model = _Scripted() if args.fake else _build_model(args.model, "ollama")
     lines = anyio.run(lambda: run_demo(scenario, model, arms))
     text = "\n".join(lines) + "\n"
-    sys.stdout.write(text)
+    # The first two lines echo the command for the transcript files. A terminal already shows it.
+    sys.stdout.write("\n".join(lines[2:]) + "\n")
     if args.transcript:
         Path(args.transcript).parent.mkdir(parents=True, exist_ok=True)
         Path(args.transcript).write_text(text, encoding="utf-8", newline="\n")
